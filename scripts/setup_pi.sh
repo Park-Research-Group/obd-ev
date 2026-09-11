@@ -16,7 +16,7 @@ VENV_DIR="$REPO_DIR/.venv"
 echo "[1/8] apt packages"
 sudo apt-get update
 sudo apt-get install -y \
-    python3-pip python3-venv \
+    python3-pip python3-venv python3-yaml \
     bluetooth bluez \
     gpsd gpsd-clients python3-gps \
     i2c-tools \

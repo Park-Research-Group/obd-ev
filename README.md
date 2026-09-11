@@ -91,6 +91,7 @@ scripts/
   upload.sh           rclone upload              authorize_kit.sh  cloned cards
   self_update.sh      pull + apply, on connect   post_update.sh    apply an update
   obd_watch.py        live decoded OBD signals   bt_prepare.sh     BT state repair
+  obd_probe.py        BLE adapter bench check
 tests/            decoder, portal, logger, naming
 vehicles/         vendored OBDb profiles + catalogue
 ```

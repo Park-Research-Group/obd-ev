@@ -62,6 +62,18 @@ env_get() {                   # current value of a key, if the file exists
         | sed -n "s/^$1=//p" | tail -1
 }
 
+env_set() {                   # env_set KEY VALUE: update in place, or append
+    # The file is edited key by key rather than rewritten, so a re-run keeps
+    # whatever else is in it: the vehicle chosen last time, a pinned BLE
+    # address, OBD_EV_AUTO_UPDATE turned on by hand.
+    local key="$1" value="$2"
+    if sudo grep -q "^${key}=" "$ENV_FILE" 2>/dev/null; then
+        sudo sed -i "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
+    else
+        printf '%s=%s\n' "$key" "$value" | sudo tee -a "$ENV_FILE" >/dev/null
+    fi
+}
+
 # --------------------------------------------------------------------------
 
 echo "${bold}obd-ev kit setup${reset}"
@@ -101,15 +113,24 @@ while [ "${#AP_PASSWORD}" -lt 8 ]; do
 done
 
 note "Writing $ENV_FILE"
-sudo tee "$ENV_FILE" >/dev/null <<ENVEOF
-# obd-ev kit configuration. Written by scripts/setup_kit.sh.
-OBD_EV_DEVICE_ID=$DEVICE_ID
-OBD_EV_LOG_DIR=$REPO_DIR/logs
-OBD_EV_REMOTE=obd-ev:obd-ev-uploads
-OBD_EV_RCLONE_CONF=$HOME/.config/rclone/rclone.conf
-# Password for the "OBD-EV-Setup-$DEVICE_ID" network the participant joins.
-OBD_EV_AP_PASSWORD=$AP_PASSWORD
+if [ ! -f "$ENV_FILE" ]; then
+    sudo tee "$ENV_FILE" >/dev/null <<ENVEOF
+# obd-ev kit configuration. Written by scripts/setup_kit.sh; edited in place
+# on re-runs, so hand-added settings survive.
+#
+# Remote updates are OFF until you set OBD_EV_AUTO_UPDATE=1. Read
+# scripts/self_update.sh first: whoever can push to the tracked branch gets
+# root on this kit. The branch below is what a kit follows once enabled.
+#OBD_EV_AUTO_UPDATE=1
 ENVEOF
+fi
+env_set OBD_EV_DEVICE_ID "$DEVICE_ID"
+env_set OBD_EV_LOG_DIR "$REPO_DIR/logs"
+env_set OBD_EV_REMOTE "obd-ev:obd-ev-uploads"
+env_set OBD_EV_RCLONE_CONF "$HOME/.config/rclone/rclone.conf"
+env_set OBD_EV_UPDATE_BRANCH "deploy"
+# Password for the "OBD-EV-Setup-<id>" network the participant joins.
+env_set OBD_EV_AP_PASSWORD "$AP_PASSWORD"
 # Readable by the user who runs the tooling, not world-readable. 600 would
 # lock out preflight.py, authorize_kit.sh and this script's own re-runs; the
 # only secret in here is the setup-AP password, which is printed on the label

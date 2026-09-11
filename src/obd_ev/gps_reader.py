@@ -70,21 +70,42 @@ class GPSReader:
             log.error("python-gps not installed; GPS disabled")
             return
 
-        try:
-            session = gps(host=self.cfg.host, port=str(self.cfg.port),
-                          mode=WATCH_ENABLE | WATCH_NEWSTYLE)
-        except Exception as e:
-            log.error("gpsd connect failed: %s", e)
-            return
+        # Outer loop reconnects: gpsd restarting, or not being up yet when
+        # the logger starts, must not cost the rest of the drive.
+        backoff = 2.0
+        while not self._stop.is_set():
+            try:
+                session = gps(host=self.cfg.host, port=str(self.cfg.port),
+                              mode=WATCH_ENABLE | WATCH_NEWSTYLE)
+            except Exception as e:
+                log.warning("gpsd connect failed (%s); retrying in %.0fs",
+                            e, backoff)
+                self._stop.wait(backoff)
+                backoff = min(backoff * 2, 60.0)
+                continue
+            backoff = 2.0
+            log.info("connected to gpsd at %s:%s", self.cfg.host, self.cfg.port)
+            self._read_session(session)
+            if not self._stop.is_set():
+                log.warning("gpsd connection lost; reconnecting")
+                self._stop.wait(backoff)
 
+    def _read_session(self, session) -> None:
+        errors = 0
         while not self._stop.is_set():
             try:
                 report = session.next()
             except StopIteration:
-                break
+                return
             except Exception as e:
-                log.warning("gpsd read error: %s", e)
+                errors += 1
+                if errors == 1 or errors % 30 == 0:
+                    log.warning("gpsd read error (%d in a row): %s", errors, e)
+                if errors >= 30:
+                    return            # give up on this session; reconnect
+                self._stop.wait(1.0)
                 continue
+            errors = 0
 
             kind = getattr(report, "class", None)
             if kind == "SKY":

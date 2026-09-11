@@ -39,6 +39,7 @@ UNIT_SUFFIX = {
     "milesPerKilowattHour": "mi_per_kwh",
     "seconds": "s", "milliseconds": "ms", "minutes": "min", "hours": "h",
     "degrees": "deg", "radians": "rad",
+    "degreesPerSecond": "dps", "radiansPerSecond": "rad_per_s",
     "psi": "psi", "bars": "bar", "kilopascal": "kpa",
     "ohms": "ohm", "kiloohms": "kohm", "milliohms": "mohm",
     "megaohms": "megohm", "microohms": "uohm",

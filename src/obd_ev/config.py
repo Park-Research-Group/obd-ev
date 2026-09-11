@@ -31,8 +31,17 @@ class OBDConfig:
     adaptive_timing: int = 1
     # ELM327 response timeout, in 4ms units, as a hex string (32 = 200ms).
     response_timeout: str = "32"
+    # ELM327 protocol number (ATSP). "0" searches automatically on the first
+    # request and the logger then pins whatever was found. A known vehicle
+    # can skip the search: "6" is ISO 15765-4 CAN 11-bit 500k, which is
+    # every modern car including the Bolt EUV and IONIQ 5.
+    protocol: str = "0"
     # Ask the ECU which PIDs it supports and skip the rest.
     probe_supported: bool = True
+    # Longest one sample-loop read may spend on the adapter. Commands still
+    # due after this are picked up next cycle. Bounds how long GPS/IMU rows
+    # are held up when many commands come due at once (107 on the Bolt).
+    read_budget_seconds: float = 1.0
     # Polled every cycle.
     core_pids: List[str] = field(default_factory=lambda: [
         "SPEED", "HV_BATTERY_LIFE", "CONTROL_MODULE_VOLTAGE",
@@ -60,8 +69,12 @@ class VehicleConfig:
     min_period: float = 0.25
     default_period: float = 1.0          # for commands with no declared freq
     max_commands: int = 0                # 0 = every command in the signalset
-    # Retire a command after this many consecutive unanswered requests.
+    # Back a command off after this many consecutive unanswered requests.
     disable_after: int = 5
+    # ...and retry it this often afterwards. Retirement is a backoff, not a
+    # verdict: a car in accessory mode answers NO DATA on its HV commands
+    # and starts answering once it is in READY.
+    retry_disabled_after: float = 300.0
     include_paths: List[str] = field(default_factory=list)
     exclude_paths: List[str] = field(default_factory=list)
 
@@ -100,6 +113,11 @@ class LoggerConfig:
     # makes a file eligible for upload: upload.sh never touches the file the
     # logger is currently writing.
     rotate_minutes: float = 15.0
+    # Rotation interval while parked (trip closed, idle_hz rows). Long, so a
+    # car parked for a week does not become hundreds of files -- but not
+    # unbounded, so parked data still gets uploaded and one file cannot
+    # grow for weeks.
+    idle_rotate_minutes: float = 360.0
     # OBD offline for this long ends the trip and closes the file.
     trip_gap_seconds: float = 120.0
 
@@ -124,6 +142,10 @@ def _build(cls, raw: Optional[dict]):
     crashing. A stale key in a deployed config.yaml must never take a kit
     offline in the field."""
     raw = raw or {}
+    if not isinstance(raw, dict):
+        log.warning("%s section is not a mapping (%r); using defaults",
+                    cls.__name__, raw)
+        raw = {}
     known = {f.name for f in fields(cls)}
     unknown = set(raw) - known
     if unknown:
@@ -132,12 +154,37 @@ def _build(cls, raw: Optional[dict]):
     return cls(**{k: v for k, v in raw.items() if k in known})
 
 
+def _sanitize(cfg: "Config") -> None:
+    """Coerce the handful of values whose YAML type is easy to get wrong.
+    `response_timeout: 32` parses as an int, `flush_every: 0` would divide
+    by zero -- neither should take a kit offline."""
+    obd, lg = cfg.obd, cfg.logger
+    obd.response_timeout = str(obd.response_timeout).strip().upper() or "32"
+    obd.protocol = str(obd.protocol).strip().upper() or "0"
+    if obd.protocol not in "0123456789ABC" or len(obd.protocol) != 1:
+        log.warning("obd.protocol=%r is not an ELM327 protocol number; "
+                    "using automatic", obd.protocol)
+        obd.protocol = "0"
+    obd.command_timeout = max(0.1, float(obd.command_timeout))
+    obd.read_budget_seconds = max(obd.command_timeout,
+                                  float(obd.read_budget_seconds))
+    lg.flush_every = max(1, int(lg.flush_every))
+    lg.flush_seconds = max(0.1, float(lg.flush_seconds))
+    lg.max_hz = max(0.01, float(lg.max_hz))
+    lg.idle_hz = max(0.001, float(lg.idle_hz))
+    if cfg.device.id is not None:
+        cfg.device.id = str(cfg.device.id)
+
+
 def load(path: str | Path = "config.yaml") -> Config:
     p = Path(path)
     raw = {}
     if p.exists():
         with p.open() as f:
             raw = yaml.safe_load(f) or {}
+    if not isinstance(raw, dict):
+        log.error("%s is not a YAML mapping; ignoring it and using defaults", p)
+        raw = {}
 
     cfg = Config(
         obd=_build(OBDConfig, raw.get("obd")),
@@ -173,4 +220,5 @@ def load(path: str | Path = "config.yaml") -> Config:
     # systemd happened to start us.
     if cfg.vehicle.signalset and not Path(cfg.vehicle.signalset).is_absolute():
         cfg.vehicle.signalset = str(REPO_ROOT / cfg.vehicle.signalset)
+    _sanitize(cfg)
     return cfg

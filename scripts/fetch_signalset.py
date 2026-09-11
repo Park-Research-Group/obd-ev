@@ -54,6 +54,10 @@ def fetch_years(name: str) -> dict:
     try:
         import yaml
         doc = yaml.safe_load(raw) or {}
+    except ImportError:
+        # setup_kit.sh runs the vehicle picker before the venv (and PyYAML)
+        # exist. generations.yaml is flat enough to read without a parser.
+        doc = _generations_without_yaml(raw)
     except Exception as exc:
         print(f"  (could not parse generations.yaml: {exc})")
         return meta
@@ -77,6 +81,26 @@ def fetch_years(name: str) -> dict:
         })
     meta["years"] = sorted(years)
     return meta
+
+
+def _generations_without_yaml(raw: str) -> dict:
+    """Minimal reader for OBDb's generations.yaml when PyYAML is absent:
+    a list of `- name:` / `start_year:` / `end_year:` blocks."""
+    import re
+    gens, current = [], None
+    for line in raw.splitlines():
+        if re.match(r"^\s*-\s", line):
+            current = {}
+            gens.append(current)
+            line = re.sub(r"^\s*-\s", "", line)
+        m = re.match(r"^\s*(name|start_year|end_year)\s*:\s*(.*?)\s*$", line)
+        if m and current is not None:
+            key, value = m.group(1), m.group(2).strip("'\"")
+            if key.endswith("_year"):
+                current[key] = int(value) if value.isdigit() else None
+            else:
+                current[key] = value
+    return {"generations": gens}
 
 
 def list_vehicles(query: str) -> int:

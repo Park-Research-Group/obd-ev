@@ -17,9 +17,9 @@ DESCRIPTIONS = [
     ("accel_x", "IMU acceleration, X axis (low-pass filtered)", "metersPerSecondSquared"),
     ("accel_y", "IMU acceleration, Y axis (low-pass filtered)", "metersPerSecondSquared"),
     ("accel_z", "IMU acceleration, Z axis (low-pass filtered)", "metersPerSecondSquared"),
-    ("gyro_x", "IMU angular rate, X axis (low-pass filtered)", "degrees"),
-    ("gyro_y", "IMU angular rate, Y axis (low-pass filtered)", "degrees"),
-    ("gyro_z", "IMU angular rate, Z axis (low-pass filtered)", "degrees"),
+    ("gyro_x", "IMU angular rate, X axis (low-pass filtered)", "degreesPerSecond"),
+    ("gyro_y", "IMU angular rate, Y axis (low-pass filtered)", "degreesPerSecond"),
+    ("gyro_z", "IMU angular rate, Z axis (low-pass filtered)", "degreesPerSecond"),
     ("accel_mag_max", "Largest acceleration magnitude since the previous row",
      "metersPerSecondSquared"),
     ("accel_mag_min", "Smallest acceleration magnitude since the previous row",
@@ -72,25 +72,44 @@ class IMUReader:
                       sys.executable)
             return
 
-        try:
-            sensor = mpu6050(self.cfg.i2c_address)
-        except Exception as e:
-            log.error("MPU-6050 init failed: %s", e)
-            return
-
         period = 1.0 / max(1, self.cfg.sample_hz)
         a = self.cfg.lowpass_alpha
         f = IMUSample()
         primed = False
+        sensor = None
+        errors = 0
+        last_warning = 0.0
+
+        def warn(msg, *args):
+            # A sensor that drops off the bus would otherwise log at
+            # sample_hz for as long as it stays gone.
+            nonlocal last_warning
+            now = time.monotonic()
+            if now - last_warning >= 60:
+                log.warning(msg + " (repeating at most once a minute)", *args)
+                last_warning = now
 
         while not self._stop.is_set():
+            if sensor is None:
+                try:
+                    sensor = mpu6050(self.cfg.i2c_address)
+                    errors = 0
+                except Exception as e:
+                    warn("MPU-6050 init failed: %s", e)
+                    self._stop.wait(5.0)
+                    continue
             try:
                 ac = sensor.get_accel_data()
                 gy = sensor.get_gyro_data()
             except Exception as e:
-                log.warning("IMU read error: %s", e)
-                time.sleep(period)
+                errors += 1
+                warn("IMU read error: %s", e)
+                if errors >= 20:
+                    sensor = None     # re-open the bus rather than spin
+                    errors = 0
+                self._stop.wait(period)
                 continue
+            errors = 0
 
             if not primed:
                 # Seed the filter with the first real reading; starting from

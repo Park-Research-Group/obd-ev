@@ -37,16 +37,26 @@ for block in "$tmp_dir"/wifi_block_*.tmp; do
     [ -z "$ssid" ] && continue
 
     echo "adding network: $ssid"
+    # Replace rather than duplicate: a re-run (the file was re-added, or a
+    # previous run died before renaming it) must not stack profiles.
+    nmcli connection delete "$ssid" >/dev/null 2>&1 || true
     if [ -z "$psk" ]; then
-        nmcli -t connection add type wifi ifname wlan0 \
-            con-name "$ssid" ssid "$ssid" || true
-    else
+        ok=0
         nmcli -t connection add type wifi ifname wlan0 \
             con-name "$ssid" ssid "$ssid" \
-            wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$psk" || true
+            connection.autoconnect yes && ok=1
+    else
+        ok=0
+        nmcli -t connection add type wifi ifname wlan0 \
+            con-name "$ssid" ssid "$ssid" \
+            wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$psk" \
+            connection.autoconnect yes && ok=1
     fi
-    nmcli connection modify "$ssid" connection.autoconnect yes
-    added=$((added + 1))
+    if [ "$ok" = 1 ]; then
+        added=$((added + 1))
+    else
+        echo "could not add network: $ssid" >&2
+    fi
 done
 
 if [ "$added" -eq 0 ]; then

@@ -16,7 +16,13 @@ obd:
   max_read_failures: 5      # silent cycles before forcing a reconnect
   adaptive_timing: 1        # ELM327 ATAT: 0=off 1=adaptive 2=aggressive
   response_timeout: "32"    # ELM327 ATST, 4ms units, hex ("32" = 200ms)
+  protocol: "0"             # ELM327 ATSP: "0" = search, then pin what was
+                            # found. "6" (ISO 15765-4 CAN 11-bit 500k) skips
+                            # the search on the Bolt EUV, IONIQ 5 and every
+                            # other modern car.
   probe_supported: true     # ask the ECU which PIDs it has, skip the rest
+  read_budget_seconds: 1.0  # longest one sample-loop read may hold the
+                            # adapter; commands still due wait a cycle
 
   # --- Generic Mode 01, used only when no vehicle signalset is configured ---
   # Polled every cycle.
@@ -66,7 +72,9 @@ vehicle:
   min_period: 0.25               # floor on request period, seconds
   default_period: 1.0            # for commands with no declared frequency
   max_commands: 0                # 0 = every command in the signalset
-  disable_after: 5               # retire a command unanswered this many times
+  disable_after: 5               # back off a command unanswered this many times
+  retry_disabled_after: 300      # ...and retry it this often (car may have
+                                 # been in accessory mode, not READY)
   include_paths: []              # e.g. [Battery, Movement] to narrow collection
   exclude_paths: []              # e.g. [DTCs]
 
@@ -89,6 +97,8 @@ logger:
   max_hz: 10.0            # ceiling on row rate; the OBD read usually paces it
   idle_hz: 0.2            # row rate while the vehicle is unreachable (parked)
   rotate_minutes: 15      # bound on how much one power cut can cost
+  idle_rotate_minutes: 360  # rotation while parked; keeps parked data
+                            # uploading without making hundreds of files
   trip_gap_seconds: 120   # vehicle unreachable this long ends the trip
   # Uploaded files are moved here so we don't re-upload them. Cleared when the
   # device returns from a participant.

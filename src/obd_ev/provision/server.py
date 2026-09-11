@@ -55,6 +55,20 @@ CAPTIVE_PROBES = (
 HEX64 = re.compile(r"\A[0-9a-fA-F]{64}\Z")
 
 
+def _is_sae_only(security: str) -> bool:
+    """nmcli's SECURITY column names WPA3-Personal "WPA3" (never "SAE"):
+    a transition-mode network shows "WPA2 WPA3" and can take a PMK, a
+    WPA3-only one shows just "WPA3" and cannot."""
+    tokens = set(security.upper().replace("-", " ").split())
+    has_wpa3 = bool(tokens & {"WPA3", "SAE"})
+    has_psk = bool(tokens & {"WPA2", "WPA1", "WPA"})
+    return has_wpa3 and not has_psk
+
+
+def _is_open(security: str) -> bool:
+    return security.strip() in ("", "--")
+
+
 def nmcli(*args: str, timeout: int = 30, check: bool = False) -> subprocess.CompletedProcess:
     cmd = ["nmcli"] + list(args)
     log.debug("running %s", " ".join(cmd))
@@ -106,8 +120,8 @@ class Provisioner:
                     "security": security,
                     # SAE cannot be joined from a PMK; the page warns instead
                     # of silently failing after the AP has already come down.
-                    "sae_only": "SAE" in security and "WPA2" not in security,
-                    "open": security in ("", "--"),
+                    "sae_only": _is_sae_only(security),
+                    "open": _is_open(security),
                 }
         self.networks = sorted(seen.values(), key=lambda n: -n["signal"])
         log.info("scan found %d networks", len(self.networks))
@@ -142,7 +156,7 @@ class Provisioner:
     # -- joining the participant's network ----------------------------------
 
     def _install_profile(self, ssid: str, psk: Optional[str],
-                         hidden: bool) -> None:
+                         hidden: bool, key_mgmt: str = "wpa-psk") -> None:
         nmcli("connection", "delete", HOME_CONNECTION)
         args = ["connection", "add", "type", "wifi", "ifname", self.iface,
                 "con-name", HOME_CONNECTION, "ssid", ssid,
@@ -151,16 +165,19 @@ class Provisioner:
         if hidden:
             args += ["802-11-wireless.hidden", "yes"]
         if psk:
-            args += ["wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", psk]
+            # wpa-psk takes either a passphrase or a 64-hex PMK and covers
+            # WPA2 and WPA3 transition mode. A WPA3-only network needs `sae`,
+            # which only works from the passphrase.
+            args += ["wifi-sec.key-mgmt", key_mgmt, "wifi-sec.psk", psk]
         add = nmcli(*args)
         if add.returncode != 0:
             raise RuntimeError(f"could not save network: {add.stderr.strip()}")
 
     def connect(self, ssid: str, psk: Optional[str], hidden: bool,
-                timeout: int = 45) -> Dict[str, object]:
+                timeout: int = 45, key_mgmt: str = "wpa-psk") -> Dict[str, object]:
         """Bring the AP down and try the participant's network. On failure the
         AP comes back so they can correct the password."""
-        self._install_profile(ssid, psk, hidden)
+        self._install_profile(ssid, psk, hidden, key_mgmt)
         self.stop_ap()
         time.sleep(2)
 
@@ -179,6 +196,7 @@ class Provisioner:
             # the credential itself.
             "credential": "pmk" if psk and HEX64.match(psk) else
                           ("passphrase" if psk else "open"),
+            "key_mgmt": key_mgmt if psk else "none",
             "connectivity": connectivity,
             "provisioned_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "device_id": self.device_id,
@@ -270,14 +288,24 @@ class PortalHandler(BaseHTTPRequestHandler):
             self._json({"error": "malformed request"}, 400)
             return
 
-        ssid = (payload.get("ssid") or "").strip()
+        if not isinstance(payload, dict):
+            self._json({"error": "malformed request"}, 400)
+            return
+        # The SSID is used verbatim: it is the PBKDF2 salt the page derived
+        # the PMK with, and some networks really do have spaces at the ends.
+        ssid = str(payload.get("ssid") or "")
         psk = (payload.get("psk") or "").strip() or None
         hidden = bool(payload.get("hidden"))
-        if not ssid:
+        key_mgmt = "sae" if payload.get("key_mgmt") == "sae" else "wpa-psk"
+        if not ssid.strip():
             self._json({"error": "Choose a network first."}, 400)
             return
         if psk and not HEX64.match(psk) and len(psk) < 8:
             self._json({"error": "A WiFi password is at least 8 characters."},
+                       400)
+            return
+        if key_mgmt == "sae" and (not psk or HEX64.match(psk)):
+            self._json({"error": "A WPA3 network needs the password itself."},
                        400)
             return
 
@@ -292,15 +320,16 @@ class PortalHandler(BaseHTTPRequestHandler):
         except OSError:
             pass
 
-        threading.Thread(target=_attempt, args=(prov, ssid, psk, hidden),
+        threading.Thread(target=_attempt,
+                         args=(prov, ssid, psk, hidden, key_mgmt),
                          daemon=True, name="wifi-join").start()
 
 
 def _attempt(prov: Provisioner, ssid: str, psk: Optional[str],
-             hidden: bool) -> None:
+             hidden: bool, key_mgmt: str = "wpa-psk") -> None:
     time.sleep(2)  # let the HTTP response drain to the phone
     try:
-        result = prov.connect(ssid, psk, hidden)
+        result = prov.connect(ssid, psk, hidden, key_mgmt=key_mgmt)
     except Exception as exc:
         log.exception("provisioning attempt failed")
         result = {"ok": False, "error": str(exc)}

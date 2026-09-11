@@ -110,9 +110,12 @@ AP returns so the password can be corrected.
 
 The stored PMK cannot be reversed into the passphrase — that is the point, since
 participants reuse passwords — but it is still a credential for that network, so
-treat returned SD cards as sensitive. **WPA3-SAE-only networks can't be joined
-from a PMK**; the page detects this, warns on screen, and only then falls back
-to sending the passphrase. `provisioned.json` records which method was used.
+treat returned SD cards as sensitive. **WPA3-only networks can't be joined
+from a PMK** (nmcli lists them as `WPA3` alone, versus `WPA2 WPA3` for the
+common transition mode); the page detects this, warns on screen, and only then
+falls back to sending the passphrase, which the Pi saves with `sae` key
+management. Open networks need no password at all — tick "No password" for a
+network entered by hand. `provisioned.json` records which method was used.
 
 Re-provision a kit:
 
@@ -140,11 +143,13 @@ profile is updated or a kit reassigned, and a shared dictionary would start
 lying about older trips.
 
 A **new trip** starts on logger start and when the vehicle returns after
-`trip_gap_seconds`. A **new part** starts every `rotate_minutes` and when a trip
-goes quiet. On most cars power dies with the ignition, so one trip is one power
-cycle. The logger records its open file in `logs/.current`; `upload.sh` skips
-it, but only while the service is running — after an unclean shutdown that file
-is complete and uploads normally.
+`trip_gap_seconds`. A **new part** starts every `rotate_minutes` while driving,
+every `idle_rotate_minutes` (6 h) while parked, and when a trip goes quiet. On
+most cars power dies with the ignition, so one trip is one power cycle. The
+logger records its open file in `logs/.current`; `upload.sh` re-checks it
+before every file it touches, but only while the service is running — after an
+unclean shutdown that file is complete and uploads normally. Folder and file
+names are UTC, like the `timestamp` column.
 
 Uploads fire on the NetworkManager dispatcher hook the moment the Pi joins a
 network, with a one-minute timer as backstop. Shipped trips move to
@@ -155,13 +160,19 @@ network, with a one-minute timer as backstop. Shipped trips move to
 Kits can pull and apply updates themselves when they next have internet, which
 is how you fix something on a kit sitting in a participant's driveway.
 
-**Off by default.** Enable per kit in `/etc/default/obd-ev`:
+**Off by default.** `setup_kit.sh` writes `OBD_EV_UPDATE_BRANCH=deploy` and a
+commented-out `OBD_EV_AUTO_UPDATE=1` into `/etc/default/obd-ev`; enable per
+kit by uncommenting it:
 
 ```sh
 OBD_EV_AUTO_UPDATE=1
 OBD_EV_UPDATE_BRANCH=deploy        # default: whatever branch the kit is on
-OBD_EV_UPDATE_MIN_INTERVAL=3600    # seconds between checks
+OBD_EV_UPDATE_MIN_INTERVAL=3600    # seconds between checks (counted from the
+                                   # last check that actually reached GitHub)
 ```
+
+A kit built before the update hooks existed needs them installed once by hand
+(`sudo ./scripts/post_update.sh`); after that, updates install their own.
 
 > **Understand the blast radius before enabling this.** Anyone who can push to
 > that branch gets root on every kit running it, including ones in
@@ -207,7 +218,50 @@ update seems not to apply), refresh pip dependencies if `requirements.txt`
 changed, reinstall the dispatcher hooks, and fix up Bluetooth. It deliberately
 does not run apt — that is `setup_pi.sh`'s job.
 
-Apply an update by hand on a kit you can reach:
+### Updating an existing kit by hand (P001)
+
+P001 was built from `main` before the update machinery existed, so it has
+neither the dispatcher hook nor the `deploy` branch. Do this once, over SSH on
+the kit's home WiFi (hostname `linklab01`):
+
+```bash
+ssh <user>@linklab01.local
+cd ~/obd-ev
+
+# 1. Move onto the release branch and take the update.
+git fetch origin
+git checkout deploy          # first time; afterwards `git pull` is enough
+git pull --ff-only
+
+# 2. Apply the parts a pull cannot: systemd units, pip deps, the update and
+#    upload hooks, Bluetooth. Then restart the logger on the new code.
+sudo ./scripts/post_update.sh
+sudo systemctl restart obd-ev
+
+# 3. Check it came up clean.
+./scripts/preflight.py --quick
+journalctl -u obd-ev -n 30 --no-pager
+
+# 4. Optional: let it update itself from `deploy` from now on.
+sudo sed -i 's/^#OBD_EV_AUTO_UPDATE=1/OBD_EV_AUTO_UPDATE=1/' /etc/default/obd-ev
+grep -q '^OBD_EV_UPDATE_BRANCH=' /etc/default/obd-ev \
+    || echo 'OBD_EV_UPDATE_BRANCH=deploy' | sudo tee -a /etc/default/obd-ev
+```
+
+If `git checkout deploy` refuses because of local edits, `git stash` first
+(and `git stash drop` once you are sure nothing in it matters). `git pull`
+will fail with "not a fast-forward" only if `deploy` was rewritten; that is a
+sign to stop and look, not to force it.
+
+Then, in the car, prove the adapter path — it has never been exercised on
+this kit:
+
+```bash
+./scripts/obd_probe.py           # ignition off is fine for the adapter checks
+./scripts/obd_probe.py           # again in READY, for the vehicle commands
+```
+
+Apply a later update by hand on any kit you can reach:
 
 ```bash
 cd ~/obd-ev && git pull
@@ -227,10 +281,36 @@ journalctl -u obd-ev-update --no-pager -n 30
 ```bash
 ./scripts/preflight.py            # everything, exits non-zero on failure
 ./scripts/sensors.py              # live GPS + IMU        --gps / --imu / --once
+./scripts/obd_probe.py            # BLE adapter: scan, connect, handshake, first commands
 ./scripts/obd_watch.py            # live decoded vehicle signals    --all / --once
 journalctl -u obd-ev -f           # connection and trip events
 sudo systemctl start obd-ev-upload
 ```
+
+### The OBD adapter, before the first drive
+
+Run `obd_probe.py` in the parked car (the OBD port is powered with the ignition
+off, so the adapter checks work; the vehicle commands need READY). It stops
+`obd-ev` for the duration, scans, connects with the same code the logger uses,
+prints `ATI` / `ATRV` / the protocol, then tries the profile's first commands.
+
+```
+  looking for name containing 'VEEPEAK'
+   -62 dBm  AA:BB:CC:DD:EE:FF  VEEPEAK                  fff0   <-- matches obd.ble_name
+  PASS  adapter advertising as 'VEEPEAK' at AA:BB:CC:DD:EE:FF
+  NOTE  pin it in config.yaml:  obd.ble_address: AA:BB:CC:DD:EE:FF
+  PASS  connected in 3.2s; write=0000fff2-... notify=0000fff1-...
+  PASS  adapter identifies as: ELM327 v1.5
+  PASS  battery voltage: 12.6V
+  PASS  5 signals decoded from 5 commands
+```
+
+The adapter must be a **BLE** model: Veepeak **OBDCheck BLE** or **BLE+**
+(both advertise as `VEEPEAK` on service `FFF0`). The OBDCheck BLE is dual-mode
+— classic Bluetooth for Android, LE for iOS — which is why the kit forces the
+controller to LE-only; a classic-only model (Veepeak Mini, VP11) never appears
+in a BLE scan and cannot work with this logger. `--scan` alone lists what the
+Pi can see.
 
 `sensors.py` and `obd_watch.py` both use the same code the logger uses, so a
 clean run means the logging path works, not merely that something is on the bus.
@@ -265,7 +345,8 @@ Every entry here is a failure seen on real hardware.
 | `No powered Bluetooth adapters found` | Radio is rfkill soft-blocked. `sudo rfkill unblock bluetooth`. The `bluetooth` service looks perfectly healthy in this state, which is why preflight checks rfkill separately. |
 | `BLE OBD adapter not found` | The dongle does not advertise a name containing `obd.ble_name` (default `VEEPEAK`). Scan for the real name, then pin `obd.ble_address`. |
 | Connects, then `every command went unanswered; resetting` | The vehicle is not awake. An EV must be in **READY**, not accessory mode, or the HV systems will not answer diagnostics. |
-| Repeated `retiring command …` | Those PIDs genuinely are not on this trim. Their columns stay blank; harmless. |
+| Repeated `backing off command …` | Those PIDs are not answering on this trim, or the car was not in READY yet. Backed-off commands are retried every `retry_disabled_after` (5 min) and come back the moment they answer; columns stay blank meanwhile. |
+| Adapter connects but nothing decodes, `obd_probe.py` shows `NO DATA` in READY | Wrong profile for the car, or the adapter is in an unexpected mode. `obd_probe.py --no-vehicle` then `journalctl -u obd-ev` with `-v` shows the raw frames. |
 | GPS device missing (`/dev/ttyS0` or `/dev/ttyAMA0`) | Wrong device for the board. Pi 4 uses `/dev/ttyS0` (mini UART; the PL011 is Bluetooth). Pi 5 uses `/dev/ttyAMA0` and needs `dtparam=uart0=on` plus a reboot. `setup_pi.sh` picks the right one — see [wiring.md](wiring.md). |
 | gpsd running but never a fix | Needs sky view. Cold start is 30 s–2 min. Check `snr` in `sensors.py`. |
 | `no I2C device at 0x68` | IMU wiring — SDA pin 3, SCL pin 5. Note many boards sold as MPU-6050 are actually MPU-6500 (`WHO_AM_I` returns `0x70`); the driver works either way. |

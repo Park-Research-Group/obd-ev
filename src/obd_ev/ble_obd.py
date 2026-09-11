@@ -1,4 +1,5 @@
 import asyncio
+import concurrent.futures
 import logging
 import re
 import subprocess
@@ -98,6 +99,33 @@ class OBDLinkDown(RuntimeError):
     """The link is up but the adapter has stopped answering; reconnect."""
 
 
+# ELM327 protocol numbers (AT SP h). "0" means search automatically.
+ELM_PROTOCOLS = {
+    "0": "automatic", "1": "SAE J1850 PWM", "2": "SAE J1850 VPW",
+    "3": "ISO 9141-2", "4": "ISO 14230-4 KWP (5 baud)",
+    "5": "ISO 14230-4 KWP (fast)", "6": "ISO 15765-4 CAN 11-bit 500k",
+    "7": "ISO 15765-4 CAN 29-bit 500k", "8": "ISO 15765-4 CAN 11-bit 250k",
+    "9": "ISO 15765-4 CAN 29-bit 250k", "A": "SAE J1939",
+    "B": "USER1 CAN", "C": "USER2 CAN",
+}
+
+
+def parse_dpn(response: str) -> Optional[str]:
+    """Protocol number out of an `ATDPN` reply, or None if the adapter has
+    not settled on one yet.
+
+    The reply is a single hex digit, prefixed with 'A' while automatic
+    search is enabled. Straight after `ATSP0`, before any OBD request has
+    gone out, the adapter has searched nothing and reports protocol 0 --
+    pinning that would be a no-op, so it is reported as "not yet known".
+    """
+    for line in reversed(response.strip().upper().splitlines()):
+        m = re.fullmatch(r"\s*A?([0-9A-C])\s*", line)
+        if m:
+            return None if m.group(1) == "0" else m.group(1)
+    return None
+
+
 def _forget_cached_device(address: str) -> None:
     """Drop BlueZ's cached record for an address.
 
@@ -136,29 +164,49 @@ class BleElm327:
         self.notify_uuid: Optional[str] = None
         self.buffer = ""
         self.notify_event: Optional[asyncio.Event] = None
+        self._closed = False
         self.thread.start()
 
     def connect(self) -> None:
-        self._run(self._connect())
+        # Scan and connect each get `cfg.timeout`, plus the ELM327 handshake.
+        self._run(self._connect(), timeout=2 * self.cfg.timeout + 30)
 
     def close(self) -> None:
         try:
-            self._run(self._close())
+            self._run(self._close(), timeout=10)
         except Exception as exc:
             log.debug("error closing BLE link: %s", exc)
         finally:
+            self._closed = True
             self.loop.call_soon_threadsafe(self.loop.stop)
             self.thread.join(timeout=2)
 
     def command(self, command: str, timeout: Optional[float] = None) -> str:
-        return self._run(self._command(command, timeout or self.cfg.command_timeout))
+        budget = timeout or self.cfg.command_timeout
+        return self._run(self._command(command, budget), timeout=budget + 5)
 
-    def pin_protocol(self) -> None:
-        self._run(self._pin_protocol())
+    def pin_protocol(self) -> bool:
+        """Freeze the protocol the adapter settled on. Returns True once it
+        is pinned (or was fixed by config), False if it is not yet known."""
+        return self._run(self._pin_protocol(), timeout=15)
 
-    def _run(self, coro):
+    def _run(self, coro, timeout: float):
+        """Run a coroutine on the BLE thread and wait for it, bounded.
+
+        Every BLE operation ends up here from the sample loop's thread. An
+        unbounded wait would let a wedged BlueZ/D-Bus call stall the whole
+        logger -- GPS and IMU rows included -- so a timeout here is treated
+        as the link being gone, and the supervisor rebuilds it.
+        """
+        if self._closed or not self.thread.is_alive():
+            coro.close()
+            raise OBDLinkDown("BLE event loop is not running")
         future: Future = asyncio.run_coroutine_threadsafe(coro, self.loop)
-        return future.result()
+        try:
+            return future.result(timeout=timeout)
+        except concurrent.futures.TimeoutError:
+            future.cancel()
+            raise OBDLinkDown(f"BLE operation did not complete in {timeout:.0f}s")
 
     async def _connect(self) -> None:
         if BleakClient is None or BleakScanner is None:
@@ -176,8 +224,17 @@ class BleElm327:
             try:
                 await self.client.connect()
             except Exception as exc:
-                log.warning("direct BLE connect failed (%s), falling back to scan", exc)
-                self.client = None
+                if _is_bredr_failure(exc):
+                    # Same BlueZ transport mix-up as on the scan path below.
+                    log.warning("BlueZ attempted a BR/EDR connection to %s (%s); "
+                                "forgetting the cached device and retrying over LE",
+                                self.cfg.ble_address, exc)
+                    _forget_cached_device(self.cfg.ble_address)
+                    await asyncio.sleep(2)
+                    self.client = None
+                else:
+                    log.warning("direct BLE connect failed (%s), falling back to scan", exc)
+                    self.client = None
 
         if self.client is None:
             device = await BleakScanner.find_device_by_filter(
@@ -210,30 +267,50 @@ class BleElm327:
         # ATZ resets the adapter and emits a version banner; give it room.
         await self._command("ATZ", timeout=8)
         headers = "ATH1" if self.raw_frames else "ATH0"
-        auto_format = "ATCAF0" if self.raw_frames else "ATCAF1"
-        for cmd in ["ATE0", "ATL0", "ATS0", headers, auto_format]:
+        # Auto-formatting stays ON in both modes. With headers on, the ELM327
+        # prints received frames raw (CAN id + PCI byte, no reassembly),
+        # which is the format obdb.reassemble() expects -- while on the send
+        # side it still adds the ISO-TP PCI byte and pads to 8 bytes. With
+        # CAF0 the request bytes go out exactly as typed, so `22F010` would
+        # hit the bus as a consecutive frame and no ECU would ever answer.
+        for cmd in ["ATE0", "ATL0", "ATS0", headers, "ATCAF1", "ATCFC1"]:
             await self._command(cmd, timeout=3)
         # Adaptive timing lets the adapter return as soon as the ECU is done
         # instead of always waiting out the full response window.
         await self._command(f"ATAT{self.cfg.adaptive_timing}", timeout=3)
         await self._command(f"ATST{self.cfg.response_timeout}", timeout=3)
-        await self._command("ATSP0", timeout=3)
+        await self._command(f"ATSP{self._protocol()}", timeout=3)
 
-    async def _pin_protocol(self) -> None:
+    def _protocol(self) -> str:
+        return str(self.cfg.protocol or "0").strip().upper()
+
+    async def _pin_protocol(self) -> bool:
         """Freeze the auto-detected protocol so later failures don't trigger a
-        fresh (multi-second) protocol search on every command."""
+        fresh (multi-second) protocol search on every command.
+
+        Only meaningful after the adapter has actually talked to the vehicle:
+        the search happens on the first OBD request, not on `ATSP0`, so the
+        caller invokes this once data has come back. Returns True when
+        pinned, False when the protocol is not known yet.
+        """
+        if self._protocol() != "0":
+            return True         # fixed by config; nothing to discover
         try:
             found = await self._command("ATDPN", timeout=3)
         except Elm327Timeout:
-            return
-        match = re.search(r"A?([0-9A-C])", found.strip().upper())
-        if not match:
-            return
+            return False
+        number = parse_dpn(found)
+        if number is None:
+            log.debug("protocol not determined yet (ATDPN -> %r)", found)
+            return False
         try:
-            await self._command(f"ATSP{match.group(1)}", timeout=3)
-            log.info("pinned OBD protocol to %s", match.group(1))
+            await self._command(f"ATSP{number}", timeout=3)
         except Elm327Timeout:
             log.debug("could not pin protocol, leaving auto-detect on")
+            return False
+        log.info("pinned OBD protocol to %s (%s)", number,
+                 ELM_PROTOCOLS.get(number, "?"))
+        return True
 
     async def _close(self) -> None:
         if self.client and self.client.is_connected:
@@ -301,9 +378,14 @@ class BleElm327:
         budget = timeout or self.cfg.command_timeout
         self.buffer = ""
         self.notify_event.clear()
-        await self.client.write_gatt_char(
-            self.write_uuid, (command.strip() + "\r").encode(), response=False
-        )
+        try:
+            await asyncio.wait_for(
+                self.client.write_gatt_char(
+                    self.write_uuid, (command.strip() + "\r").encode(),
+                    response=False),
+                timeout=budget)
+        except asyncio.TimeoutError:
+            raise OBDLinkDown(f"BLE write of {command} did not complete")
         try:
             await asyncio.wait_for(self.notify_event.wait(), timeout=budget)
         except asyncio.TimeoutError:
@@ -360,13 +442,17 @@ class BleOBDReader:
         self.supported: Optional[Set[int]] = None
         self._cycle = 0
         self._failures = 0
+        self._pinned = False
 
     def connect(self) -> None:
         self.adapter.connect()
-        self.adapter.pin_protocol()
         self._cycle = 0
         self._failures = 0
+        self._pinned = False
         self.supported = self._probe_supported() if self.cfg.probe_supported else None
+        if self.supported:
+            # The probe made the adapter search for a protocol; freeze it now.
+            self._pinned = bool(self.adapter.pin_protocol())
         if self.supported is not None:
             live = [n for n in self.core + self.slow
                     if PID_DEFS[n].pid in self.supported]
@@ -426,6 +512,9 @@ class BleOBDReader:
             except (IndexError, ValueError) as exc:
                 log.debug("could not decode %s from %r: %s", name, response, exc)
         self._cycle += 1
+
+        if out and not self._pinned:
+            self._pinned = bool(self.adapter.pin_protocol())
 
         # A wedged adapter answers nothing at all; a merely unsupported PID
         # answers "NO DATA" quickly. Only the former should force a reconnect.

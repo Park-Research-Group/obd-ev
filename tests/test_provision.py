@@ -38,9 +38,10 @@ class FakeProvisioner(ps.Provisioner):
     def stop_ap(self):
         self.ap_running = False
 
-    def connect(self, ssid, psk, hidden, timeout=45):
-        self.attempts.append({"ssid": ssid, "psk": psk, "hidden": hidden})
-        if psk == "f" * 64:
+    def connect(self, ssid, psk, hidden, timeout=45, key_mgmt="wpa-psk"):
+        self.attempts.append({"ssid": ssid, "psk": psk, "hidden": hidden,
+                              "key_mgmt": key_mgmt})
+        if psk == "f" * 64 or psk is None or key_mgmt == "sae":
             return {"ok": True, "connectivity": "full"}
         return {"ok": False, "error": "That password was not accepted."}
 
@@ -141,6 +142,40 @@ class PortalTestCase(unittest.TestCase):
         self.assertIn("8 characters", body["error"])
         self.assertEqual(self.prov.attempts, [])
 
+    def test_open_network_is_joined_without_a_credential(self):
+        status, body = self.post("/api/connect", {"ssid": "Cafe", "psk": None})
+        self.assertEqual(status, 200)
+        self.assertTrue(self.prov.done.wait(timeout=10))
+        self.assertEqual(self.prov.attempts[0]["psk"], None)
+
+    def test_wpa3_only_network_sends_the_passphrase_with_sae(self):
+        """A WPA3-only network cannot be joined from a PMK; the page sends the
+        passphrase and asks for the `sae` key management the profile needs."""
+        status, body = self.post("/api/connect",
+                                 {"ssid": "Neighbour", "psk": "a real passphrase",
+                                  "key_mgmt": "sae"})
+        self.assertEqual(status, 200)
+        self.assertTrue(self.prov.done.wait(timeout=10))
+        self.assertEqual(self.prov.attempts[0]["key_mgmt"], "sae")
+        self.assertEqual(self.prov.attempts[0]["psk"], "a real passphrase")
+
+    def test_sae_with_a_pmk_is_refused(self):
+        status, body = self.post("/api/connect",
+                                 {"ssid": "Neighbour", "psk": "f" * 64,
+                                  "key_mgmt": "sae"})
+        self.assertEqual(status, 400)
+
+    def test_ssid_is_kept_verbatim(self):
+        """The SSID is the PBKDF2 salt; a trailing space is part of it."""
+        self.post("/api/connect", {"ssid": "Home Net ", "psk": "f" * 64})
+        self.assertTrue(self.prov.done.wait(timeout=10))
+        self.assertEqual(self.prov.attempts[0]["ssid"], "Home Net ")
+
+    def test_page_supports_open_networks(self):
+        body = self.get("/").read().decode()
+        self.assertIn('id="manualOpen"', body)
+        self.assertIn("key_mgmt", body)
+
     def test_malformed_body_is_rejected(self):
         req = urllib.request.Request(
             self.url("/api/connect"), data=b"{not json",
@@ -194,9 +229,33 @@ class CredentialRecordTest(unittest.TestCase):
             ps.MARKER = Path(tmp) / "provisioned.json"
             ps.nmcli = lambda *a, **kw: type(
                 "R", (), {"returncode": 0, "stdout": "full", "stderr": ""})()
-            prov.connect("Home Net", "a real passphrase", hidden=False, timeout=1)
-            self.assertEqual(json.loads(ps.MARKER.read_text())["credential"],
-                             "passphrase")
+            prov.connect("Home Net", "a real passphrase", hidden=False, timeout=1,
+                         key_mgmt="sae")
+            record = json.loads(ps.MARKER.read_text())
+            self.assertEqual(record["credential"], "passphrase")
+            self.assertEqual(record["key_mgmt"], "sae")
+
+    def test_wpa3_profile_uses_sae_key_management(self):
+        import tempfile
+
+        prov = ps.Provisioner("P007", "labelpassword")
+        original = (ps.STATE_DIR, ps.MARKER, ps.nmcli)
+        self.addCleanup(lambda: setattr_many(ps, original))
+        calls = []
+
+        def fake_nmcli(*a, **kw):
+            calls.append(a)
+            return type("R", (), {"returncode": 0, "stdout": "full", "stderr": ""})()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ps.STATE_DIR = Path(tmp)
+            ps.MARKER = Path(tmp) / "provisioned.json"
+            ps.nmcli = fake_nmcli
+            prov.connect("Neighbour", "a real passphrase", hidden=False,
+                         timeout=1, key_mgmt="sae")
+        add = [c for c in calls if c[:2] == ("connection", "add")][0]
+        self.assertIn("sae", add)
+        self.assertNotIn("wpa-psk", add)
 
 
 if __name__ == "__main__":

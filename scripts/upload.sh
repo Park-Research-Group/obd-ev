@@ -28,13 +28,24 @@ if command -v nm-online >/dev/null 2>&1 && ! nm-online -q -t 10; then
     exit 0
 fi
 
-# The logger records the file it is writing. Only honour it while the service
-# is actually running -- after an unclean shutdown the marker is stale and
-# that file is complete and ought to be uploaded.
-open_file=""
-if systemctl is-active --quiet obd-ev 2>/dev/null; then
-    [ -f "$LOG_DIR/.current" ] && open_file="$(cat "$LOG_DIR/.current" 2>/dev/null || true)"
-fi
+# The logger records the file it is writing in logs/.current. Only honour it
+# while the service is actually running -- after an unclean shutdown the
+# marker is stale and that file is complete and ought to be uploaded.
+#
+# Re-read before EVERY file, not once up front: a run can take a while, and
+# the logger rotates in the middle of it (the trip-gap rotation two minutes
+# after parking is exactly when the on-connect upload is running). Shipping
+# the freshly opened part and moving it out from under the logger's open
+# file handle would leave the rest of that part in the archive, never
+# uploaded.
+logger_running=0
+systemctl is-active --quiet obd-ev 2>/dev/null && logger_running=1
+
+is_open_file() {
+    [ "$logger_running" = 1 ] || return 1
+    [ -f "$LOG_DIR/.current" ] || return 1
+    [ "$1" = "$(cat "$LOG_DIR/.current" 2>/dev/null || true)" ]
+}
 
 shopt -s nullglob
 uploaded_any=0
@@ -44,10 +55,16 @@ for trip_dir in "$LOG_DIR"/*/; do
     [ "$trip" = "uploaded" ] && continue
 
     for file in "$trip_dir"*.csv; do
-        [ "$file" = "$open_file" ] && continue
+        is_open_file "$file" && continue
         name="$(basename "$file")"
         if rclone --config "$RCLONE_CONF" copyto "$file" "$DEST/$trip/$name" \
                 --retries 3 --low-level-retries 5; then
+            # The logger may have opened this very file while rclone ran.
+            # Leave it; the next run re-uploads the complete version.
+            if is_open_file "$file"; then
+                echo "$trip/$name was opened by the logger mid-upload; will re-upload"
+                continue
+            fi
             mkdir -p "$ARCHIVE/$trip"
             mv "$file" "$ARCHIVE/$trip/$name"
             echo "uploaded $trip/$name"

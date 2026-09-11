@@ -82,17 +82,20 @@ def main() -> int:
     active_period = 1.0 / max(cfg.logger.max_hz, 0.01)
     idle_period = 1.0 / max(cfg.logger.idle_hz, 0.001)
     rotate_after = cfg.logger.rotate_minutes * 60.0
+    idle_rotate_after = cfg.logger.idle_rotate_minutes * 60.0
     last_obd_at = time.monotonic()
     trip_closed = False
 
     try:
         while not stop:
             started = time.monotonic()
+            obd_values = link.read()
             row = {
                 "device_id": cfg.device.id,
+                # Sampled after the read, so a row on which the link was
+                # found dead does not claim it was up.
                 "obd_connected": int(link.connected),
             }
-            obd_values = link.read()
 
             # A trip starting: ship the parked rows accumulated since the last
             # trip ended and give the drive its own file.
@@ -118,10 +121,14 @@ def main() -> int:
                          gap, csv_log.rows)
                 csv_log.rotate()
                 trip_closed = True
-            elif not trip_closed and csv_log.age_seconds > rotate_after:
-                # Bound how much a single power cut can cost. Only while a trip
-                # is running -- a car parked for a week must not turn into
-                # hundreds of near-empty files.
+            elif csv_log.age_seconds > (idle_rotate_after if trip_closed
+                                        else rotate_after):
+                # Bound how much a single power cut can cost, and close the
+                # part so it becomes eligible for upload. Parked rows rotate
+                # on a much longer interval -- a car parked for a week must
+                # not turn into hundreds of near-empty files -- but they do
+                # rotate, so they still get shipped and one file cannot
+                # grow for weeks.
                 log.info("rotating after %.0f min (%d rows)",
                          csv_log.age_seconds / 60, csv_log.rows)
                 csv_log.rotate()
@@ -132,8 +139,11 @@ def main() -> int:
                 # Sleep in slices so shutdown stays responsive at idle_hz,
                 # where a period can be several seconds.
                 deadline = time.monotonic() + remaining
-                while not stop and time.monotonic() < deadline:
-                    time.sleep(min(0.2, deadline - time.monotonic()))
+                while not stop:
+                    left = deadline - time.monotonic()
+                    if left <= 0:
+                        break
+                    time.sleep(min(0.2, left))
     finally:
         gps_reader.stop()
         imu_reader.stop()

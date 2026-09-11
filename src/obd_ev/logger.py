@@ -93,8 +93,14 @@ class CsvLogger:
 
     # -- trip and part management -------------------------------------------
 
+    @staticmethod
+    def _stamp() -> str:
+        # UTC, like the `timestamp` column, so folder names and contents
+        # agree whatever timezone the kit happens to be set to.
+        return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d_%H%M%S")
+
     def _new_trip_id(self) -> str:
-        stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+        stamp = self._stamp()
         base = f"{stamp}_{BOOT_ID}"
         candidate, seq = base, 2
         while (self.root / candidate).exists():
@@ -116,7 +122,7 @@ class CsvLogger:
 
     def _next_part_path(self) -> Path:
         tag = f"_{self.device_id}" if self.device_id else ""
-        stamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+        stamp = self._stamp()
         path = self.trip_dir / f"drive{tag}_{stamp}.csv"
         seq = 2
         while path.exists():
@@ -126,6 +132,10 @@ class CsvLogger:
 
     def _open_part(self) -> None:
         self.path = self._next_part_path()
+        # Marker first, then the file. upload.sh checks the marker before
+        # every file it touches; if the file existed before the marker named
+        # it, an upload run could ship and move it out from under us.
+        self._mark_current(self.path)
         self._fh = self.path.open("w", newline="")
         self._writer = csv.DictWriter(
             self._fh, fieldnames=self.fieldnames, extrasaction="ignore"
@@ -135,7 +145,6 @@ class CsvLogger:
         self._n = 0
         self._opened_at = time.monotonic()
         self._last_flush = self._opened_at
-        self._mark_current(self.path)
         log.info("logging to %s", self.path)
 
     def rotate(self) -> None:
@@ -173,7 +182,7 @@ class CsvLogger:
         # a slow BLE link produces, ten rows can be a minute of driving, and
         # the ignition cutting power takes all of it.
         now = time.monotonic()
-        if (self._n % self.cfg.flush_every == 0
+        if (self._n % max(1, self.cfg.flush_every) == 0
                 or now - self._last_flush >= self.cfg.flush_seconds):
             self._fh.flush()
             os.fsync(self._fh.fileno())

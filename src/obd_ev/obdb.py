@@ -10,9 +10,9 @@ values every car happens to share.
 This module is pure: bytes in, decoded signals out. It carries no I/O so it can
 be tested against OBDb's own published test vectors (see tests/test_obdb.py).
 
-Wire format assumed: `ATH1` (headers on) + `ATCAF0` (no auto-formatting), which
-makes the adapter emit raw CAN frames in exactly the form OBDb records in its
-test cases, e.g.
+Wire format assumed: `ATH1` (headers on). With headers on the ELM327 prints
+every received frame raw -- CAN id, PCI byte, data, no reassembly -- which is
+exactly the form OBDb records in its test cases, e.g.
 
     738102262F010FFFF00
     7382100000000000000
@@ -157,6 +157,9 @@ class Command:
     fcm1: bool = False
     freq: Optional[float] = None
     filter: Optional[YearFilter] = None
+    # OBDb marks commands under investigation with `dbg`; they are not part
+    # of the production signal set and a logger should not poll them.
+    dbg: bool = False
 
     @classmethod
     def from_json(cls, raw: dict) -> "Command":
@@ -175,6 +178,7 @@ class Command:
             fcm1=raw.get("fcm1", False),
             freq=raw.get("freq"),
             filter=YearFilter.from_json(raw.get("filter")),
+            dbg=bool(raw.get("dbg", False)),
         )
 
     @property

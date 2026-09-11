@@ -94,6 +94,38 @@ class TestTripLayout(unittest.TestCase):
             lg.close()
         self.assertFalse(marker.exists(), "cleared on a clean shutdown")
 
+    def test_marker_names_the_part_before_the_file_exists(self):
+        """upload.sh checks the marker right before touching a file. If the
+        file could exist before the marker named it, a run in that window
+        would ship it and move it out from under the open handle."""
+        marker = self.tmp / ".current"
+        lg = make_logger(self.tmp)
+        seen = []
+        real_open = Path.open
+
+        def spy_open(path, *a, **kw):
+            if path.suffix == ".csv" and "w" in (a[0] if a else kw.get("mode", "")):
+                seen.append(marker.read_text().strip() == str(path))
+            return real_open(path, *a, **kw)
+
+        try:
+            Path.open = spy_open
+            lg.rotate()
+        finally:
+            Path.open = real_open
+            lg.close()
+        self.assertEqual(seen, [True])
+
+    def test_names_are_utc_like_the_timestamp_column(self):
+        import datetime as dt
+        lg = make_logger(self.tmp)
+        try:
+            stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d_%H%M")
+            self.assertTrue(lg.trip_id.startswith(stamp[:-1]),
+                            f"{lg.trip_id} should start with UTC {stamp}")
+        finally:
+            lg.close()
+
     def test_empty_part_is_discarded_on_rotate(self):
         """Rotating a part that never got a row must not leave a header-only
         file behind for the uploader to ship."""

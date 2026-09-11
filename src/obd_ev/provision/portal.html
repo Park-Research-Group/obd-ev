@@ -68,9 +68,13 @@
         <input type="checkbox" id="hidden">
         <label for="hidden">Hidden network</label>
       </div>
+      <div class="row">
+        <input type="checkbox" id="manualOpen">
+        <label for="manualOpen">No password</label>
+      </div>
     </div>
 
-    <div class="field">
+    <div class="field" id="pwWrap">
       <label for="pw">Password</label>
       <input type="password" id="pw" autocapitalize="none" autocorrect="off"
              spellcheck="false" autocomplete="off">
@@ -79,6 +83,8 @@
         <label for="show">Show</label>
       </div>
     </div>
+
+    <p class="note" id="openNote" hidden>This network has no password.</p>
 
     <div id="saeWarn" class="err" hidden style="margin:14px 0 0">
       WPA3 network: the password will be sent to the device as typed.
@@ -118,11 +124,22 @@ function showError(msg){
 
 function chosenNetwork(){
   if ($("manual").checked) {
-    return { ssid: $("manualSsid").value.trim(),
-             hidden: $("hidden").checked, sae_only:false };
+    // Not trimmed: the name is also the salt the password is scrambled
+    // with, so it has to match the router's byte for byte.
+    return { ssid: $("manualSsid").value,
+             hidden: $("hidden").checked, sae_only:false,
+             open: $("manualOpen").checked };
   }
   const ssid = $("ssid").value;
-  return networks.find(n => n.ssid === ssid) || { ssid, hidden:false, sae_only:false };
+  return networks.find(n => n.ssid === ssid)
+      || { ssid, hidden:false, sae_only:false, open:false };
+}
+
+function refreshSecurityUI(){
+  const net = chosenNetwork();
+  $("saeWarn").hidden = !net.sae_only;
+  $("pwWrap").hidden = !!net.open;
+  $("openNote").hidden = !net.open;
 }
 
 function bars(signal){
@@ -155,13 +172,13 @@ async function loadNetworks(){
 $("manual").addEventListener("change", (e) => {
   $("manualWrap").hidden = !e.target.checked;
   $("ssid").disabled = e.target.checked;
+  refreshSecurityUI();
 });
+$("manualOpen").addEventListener("change", refreshSecurityUI);
 $("show").addEventListener("change", (e) => {
   $("pw").type = e.target.checked ? "text" : "password";
 });
-$("ssid").addEventListener("change", () => {
-  $("saeWarn").hidden = !chosenNetwork().sae_only;
-});
+$("ssid").addEventListener("change", refreshSecurityUI);
 
 $("form").addEventListener("submit", (e) => {
   e.preventDefault();
@@ -169,8 +186,8 @@ $("form").addEventListener("submit", (e) => {
   const net = chosenNetwork();
   const password = $("pw").value;
 
-  if (!net.ssid) { showError("Choose a network."); return; }
-  if (password.length < 8) {
+  if (!net.ssid.trim()) { showError("Choose a network."); return; }
+  if (!net.open && password.length < 8) {
     showError("Password must be at least 8 characters.");
     return;
   }
@@ -180,18 +197,20 @@ $("form").addEventListener("submit", (e) => {
 
   // Yield a frame so the button text repaints before the derivation blocks.
   setTimeout(async () => {
-    let psk;
+    let psk = null;
     try {
-      psk = net.sae_only ? null : wpaPsk(net.ssid, password);
+      if (!net.open && !net.sae_only) psk = wpaPsk(net.ssid, password);
     } catch (err) {
       showError("Could not prepare the password on this phone.");
       $("go").disabled = false; $("go").textContent = "Connect";
       return;
     }
     // WPA3-only networks cannot be joined from a PMK; send the passphrase,
-    // which the notice above told the participant about.
+    // which the notice above told the participant about. Open networks
+    // send no credential at all.
     const body = { ssid: net.ssid, hidden: !!net.hidden,
-                   psk: psk || password };
+                   psk: net.open ? null : (psk || password),
+                   key_mgmt: net.sae_only ? "sae" : "wpa-psk" };
     try {
       const resp = await fetch("/api/connect", {
         method:"POST", headers:{"Content-Type":"application/json"},

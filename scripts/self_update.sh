@@ -34,12 +34,15 @@ if [ "${OBD_EV_AUTO_UPDATE:-0}" != "1" ] && [ "$FORCE" != 1 ]; then
 fi
 
 # -- rate limit -------------------------------------------------------------
-# A dispatcher hook fires on every connect, and wifi flaps.
+# A dispatcher hook fires on every connect, and wifi flaps. The stamp is
+# written only after a fetch actually reached the remote (below): a connect
+# with no internet behind it -- the setup AP coming up, a captive hotspot --
+# must not use up the hour and skip the real home connection minutes later.
 if [ "$FORCE" != 1 ] && [ -f "$STAMP" ]; then
     age=$(( $(date +%s) - $(stat -c %Y "$STAMP" 2>/dev/null || echo 0) ))
     [ "$age" -lt "$MIN_INTERVAL" ] && exit 0
 fi
-mkdir -p /var/lib/obd-ev && touch "$STAMP"
+mkdir -p /var/lib/obd-ev
 
 # -- never interrupt a drive ------------------------------------------------
 # obd_connected is the 4th column of every row. Updating mid-trip would restart
@@ -61,6 +64,7 @@ if ! git_as fetch --quiet origin "$branch" 2>/dev/null; then
     log "fetch failed (no internet?)"
     exit 0
 fi
+touch "$STAMP"
 remote="$(git_as rev-parse "origin/$branch" 2>/dev/null)"
 [ -z "$remote" ] && { log "no such branch origin/$branch"; exit 0; }
 [ "$before" = "$remote" ] && [ "$current" = "$branch" ] && exit 0
