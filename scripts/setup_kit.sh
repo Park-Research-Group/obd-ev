@@ -65,7 +65,7 @@ env_get() {                   # current value of a key, if the file exists
 env_set() {                   # env_set KEY VALUE: update in place, or append
     # The file is edited key by key rather than rewritten, so a re-run keeps
     # whatever else is in it: the vehicle chosen last time, a pinned BLE
-    # address, OBD_EV_AUTO_UPDATE turned on by hand.
+    # address, OBD_EV_AUTO_UPDATE=0 set by hand to opt a kit out.
     local key="$1" value="$2"
     if sudo grep -q "^${key}=" "$ENV_FILE" 2>/dev/null; then
         sudo sed -i "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
@@ -118,16 +118,17 @@ if [ ! -f "$ENV_FILE" ]; then
 # obd-ev kit configuration. Written by scripts/setup_kit.sh; edited in place
 # on re-runs, so hand-added settings survive.
 #
-# Remote updates are OFF until you set OBD_EV_AUTO_UPDATE=1. Read
-# scripts/self_update.sh first: whoever can push to the tracked branch gets
-# root on this kit. The branch below is what a kit follows once enabled.
-#OBD_EV_AUTO_UPDATE=1
+# Remote updates are ON: the kit pulls the `deploy` branch whenever it has
+# internet and is not mid-drive (scripts/self_update.sh). Whoever can push to
+# that branch gets root on this kit, so promote to it deliberately. Set
+# OBD_EV_AUTO_UPDATE=0 to opt this kit out.
 ENVEOF
 fi
 env_set OBD_EV_DEVICE_ID "$DEVICE_ID"
 env_set OBD_EV_LOG_DIR "$REPO_DIR/logs"
 env_set OBD_EV_REMOTE "obd-ev:obd-ev-uploads"
 env_set OBD_EV_RCLONE_CONF "$HOME/.config/rclone/rclone.conf"
+env_set OBD_EV_AUTO_UPDATE "1"
 env_set OBD_EV_UPDATE_BRANCH "deploy"
 # Password for the "OBD-EV-Setup-<id>" network the participant joins.
 env_set OBD_EV_AP_PASSWORD "$AP_PASSWORD"

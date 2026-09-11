@@ -118,8 +118,9 @@ sudo cp "$REPO_DIR/systemd/obd-ev-portal-dns.conf" \
 # the timer; a participant may only be in range for a minute after parking.
 sudo install -m 755 "$REPO_DIR/scripts/nm-dispatcher-upload" \
         /etc/NetworkManager/dispatcher.d/90-obd-ev-upload
-# Self-update on connect. Inert unless OBD_EV_AUTO_UPDATE=1 is set in
-# /etc/default/obd-ev -- see scripts/self_update.sh before enabling it.
+# Self-update on connect: on by default, following the `deploy` branch.
+# OBD_EV_AUTO_UPDATE=0 in /etc/default/obd-ev opts a kit out -- see
+# scripts/self_update.sh for what enabling it means.
 sudo install -m 755 "$REPO_DIR/scripts/nm-dispatcher-update" \
         /etc/NetworkManager/dispatcher.d/91-obd-ev-update
 
@@ -156,6 +157,9 @@ if [ ! -f /etc/default/obd-ev ]; then
 OBD_EV_LOG_DIR=$REPO_DIR/logs
 OBD_EV_REMOTE=obd-ev:obd-ev-uploads
 OBD_EV_RCLONE_CONF=$INSTALL_HOME/.config/rclone/rclone.conf
+# Remote updates from the deploy branch. Set to 0 to opt this kit out.
+OBD_EV_AUTO_UPDATE=1
+OBD_EV_UPDATE_BRANCH=deploy
 # Password for the "OBD-EV-Setup-<device id>" network the participant joins.
 # PRINT THIS ON THE KIT LABEL.
 OBD_EV_AP_PASSWORD=$ap_password

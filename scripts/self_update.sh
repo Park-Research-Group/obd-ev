@@ -5,13 +5,14 @@
 # field picks up fixes the next time the participant parks at home. Runs as
 # root; the git operations drop to the repo owner.
 #
-# OFF unless OBD_EV_AUTO_UPDATE=1 is set in /etc/default/obd-ev. Understand
-# what you are enabling: whoever can push to the tracked branch gets root on
-# every kit running this, including ones in participants' vehicles. Point it at
-# a branch you promote to deliberately, not at your working branch.
+# ON by default, following the `deploy` branch. Understand what that means:
+# whoever can push to that branch gets root on every kit running this,
+# including ones in participants' vehicles. Treat `deploy` as a branch you
+# promote to deliberately, never as a working branch. Settings in
+# /etc/default/obd-ev:
 #
-#   OBD_EV_AUTO_UPDATE=1
-#   OBD_EV_UPDATE_BRANCH=deploy          # default: the current branch
+#   OBD_EV_AUTO_UPDATE=0                 # opt this kit out
+#   OBD_EV_UPDATE_BRANCH=deploy          # default: deploy
 #   OBD_EV_UPDATE_MIN_INTERVAL=3600      # seconds between attempts
 #
 #   scripts/self_update.sh --force       # ignore the interval and the trip check
@@ -29,7 +30,7 @@ FORCE=0
 log() { echo "self_update: $*"; }
 git_as() { sudo -u "$OWNER" git -C "$REPO_DIR" "$@"; }
 
-if [ "${OBD_EV_AUTO_UPDATE:-0}" != "1" ] && [ "$FORCE" != 1 ]; then
+if [ "${OBD_EV_AUTO_UPDATE:-1}" != "1" ] && [ "$FORCE" != 1 ]; then
     exit 0
 fi
 
@@ -56,7 +57,7 @@ if [ "$FORCE" != 1 ] && [ -f "${OBD_EV_LOG_DIR:-$REPO_DIR/logs}/.current" ]; the
 fi
 
 # -- is there anything to take? ---------------------------------------------
-branch="${OBD_EV_UPDATE_BRANCH:-$(git_as rev-parse --abbrev-ref HEAD)}"
+branch="${OBD_EV_UPDATE_BRANCH:-deploy}"
 current="$(git_as rev-parse --abbrev-ref HEAD)"
 before="$(git_as rev-parse HEAD)"
 

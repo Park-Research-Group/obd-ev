@@ -160,13 +160,13 @@ network, with a one-minute timer as backstop. Shipped trips move to
 Kits can pull and apply updates themselves when they next have internet, which
 is how you fix something on a kit sitting in a participant's driveway.
 
-**Off by default.** `setup_kit.sh` writes `OBD_EV_UPDATE_BRANCH=deploy` and a
-commented-out `OBD_EV_AUTO_UPDATE=1` into `/etc/default/obd-ev`; enable per
-kit by uncommenting it:
+**On by default**, following the `deploy` branch. `setup_kit.sh` writes these
+into `/etc/default/obd-ev`, and `self_update.sh` assumes them when they are
+absent, so a kit that predates the settings behaves the same way:
 
 ```sh
-OBD_EV_AUTO_UPDATE=1
-OBD_EV_UPDATE_BRANCH=deploy        # default: whatever branch the kit is on
+OBD_EV_AUTO_UPDATE=1               # 0 opts this kit out
+OBD_EV_UPDATE_BRANCH=deploy        # default: deploy
 OBD_EV_UPDATE_MIN_INTERVAL=3600    # seconds between checks (counted from the
                                    # last check that actually reached GitHub)
 ```
@@ -174,10 +174,11 @@ OBD_EV_UPDATE_MIN_INTERVAL=3600    # seconds between checks (counted from the
 A kit built before the update hooks existed needs them installed once by hand
 (`sudo ./scripts/post_update.sh`); after that, updates install their own.
 
-> **Understand the blast radius before enabling this.** Anyone who can push to
-> that branch gets root on every kit running it, including ones in
-> participants' vehicles. Point it at a branch you promote to deliberately —
-> `deploy`, not `main` — so a work-in-progress commit cannot reach the fleet.
+> **Understand the blast radius.** Anyone who can push to `deploy` gets root on
+> every kit, including ones in participants' vehicles. Promote to it
+> deliberately — never work on it directly — so a work-in-progress commit
+> cannot reach the fleet. To take a kit out of the loop, set
+> `OBD_EV_AUTO_UPDATE=0` in its `/etc/default/obd-ev`.
 
 ### Release workflow
 
@@ -204,7 +205,7 @@ git log --oneline deploy..main      # merged into main, not yet released
 A NetworkManager hook fires `obd-ev-update.service` on connect. `self_update.sh`
 then:
 
-1. exits immediately unless `OBD_EV_AUTO_UPDATE=1`
+1. exits immediately if the kit is opted out (`OBD_EV_AUTO_UPDATE=0`)
 2. rate-limits to `OBD_EV_UPDATE_MIN_INTERVAL` (wifi flaps a lot)
 3. **defers while a trip is running** — `obd_connected=1` in the live CSV means
    restarting the logger would lose the drive
@@ -242,10 +243,10 @@ sudo systemctl restart obd-ev
 ./scripts/preflight.py --quick
 journalctl -u obd-ev -n 30 --no-pager
 
-# 4. Optional: let it update itself from `deploy` from now on.
-sudo sed -i 's/^#OBD_EV_AUTO_UPDATE=1/OBD_EV_AUTO_UPDATE=1/' /etc/default/obd-ev
-grep -q '^OBD_EV_UPDATE_BRANCH=' /etc/default/obd-ev \
-    || echo 'OBD_EV_UPDATE_BRANCH=deploy' | sudo tee -a /etc/default/obd-ev
+# 4. From here on it updates itself from `deploy` whenever it has internet
+#    (post_update.sh installed the hook; the defaults are on). To confirm:
+sudo ./scripts/self_update.sh --force
+journalctl -u obd-ev-update -n 20 --no-pager
 ```
 
 If `git checkout deploy` refuses because of local edits, `git stash` first
