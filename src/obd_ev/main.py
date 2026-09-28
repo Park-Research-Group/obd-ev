@@ -10,6 +10,8 @@ from .gps_reader import (GPSReader, FIELDS as GPS_FIELDS,
                          DESCRIPTIONS as GPS_DESCRIPTIONS)
 from .imu_reader import (IMUReader, FIELDS as IMU_FIELDS,
                          DESCRIPTIONS as IMU_DESCRIPTIONS)
+from .led import (LedIndicator, CONNECTED, CONNECTED_IDLE,
+                  SEARCHING)
 from .logger import CsvLogger
 
 
@@ -71,6 +73,9 @@ def main() -> int:
                  cfg.vehicle.year or "")
     link.start()
 
+    led = LedIndicator(cfg.led)
+    led.start()
+
     stop = False
 
     def _sig(*_):
@@ -90,6 +95,16 @@ def main() -> int:
         while not stop:
             started = time.monotonic()
             obd_values = link.read()
+
+            # Solid means data is flowing; fast blink means the link is up but
+            # the vehicle answers nothing, which is what an asleep car looks
+            # like. Distinguishing those two saves a trip back for a laptop.
+            if obd_values:
+                led.set_state(CONNECTED)
+            elif link.connected:
+                led.set_state(CONNECTED_IDLE)
+            else:
+                led.set_state(SEARCHING)
             row = {
                 "device_id": cfg.device.id,
                 # Sampled after the read, so a row on which the link was
@@ -145,6 +160,7 @@ def main() -> int:
                         break
                     time.sleep(min(0.2, left))
     finally:
+        led.stop()
         gps_reader.stop()
         imu_reader.stop()
         link.close()

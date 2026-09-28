@@ -13,6 +13,9 @@ Environment=PYTHONPATH=@REPO_DIR@/src
 # the controller in LE-only mode, so a kit repairs its own Bluetooth state on
 # every boot instead of needing manual intervention in the field.
 ExecStartPre=+@REPO_DIR@/scripts/bt_prepare.sh
+# Also root: detaches the LED's kernel trigger and hands the brightness file
+# to the service user, so the logger can drive it.
+ExecStartPre=+@REPO_DIR@/scripts/led_prepare.sh
 ExecStart=@VENV_DIR@/bin/python -m obd_ev.main --config @REPO_DIR@/config.yaml
 Restart=on-failure
 RestartSec=5

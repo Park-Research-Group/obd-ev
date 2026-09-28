@@ -123,6 +123,20 @@ class LoggerConfig:
 
 
 @dataclass
+class LedConfig:
+    """Onboard status LED. See src/obd_ev/led.py for what each pattern means.
+
+    `ACT` is the green activity LED on a Pi 4/5. Taking it over costs you the
+    SD-card activity indication, which is a fair trade for being able to tell
+    at a glance whether the kit reached the vehicle.
+    """
+    enabled: bool = True
+    path: str = "/sys/class/leds/ACT"
+    max_brightness: int = 1
+    invert: bool = False
+
+
+@dataclass
 class DeviceConfig:
     id: Optional[str] = None
 
@@ -134,6 +148,7 @@ class Config:
     gps: GPSConfig = field(default_factory=GPSConfig)
     imu: IMUConfig = field(default_factory=IMUConfig)
     logger: LoggerConfig = field(default_factory=LoggerConfig)
+    led: LedConfig = field(default_factory=LedConfig)
     device: DeviceConfig = field(default_factory=DeviceConfig)
 
 
@@ -192,6 +207,7 @@ def load(path: str | Path = "config.yaml") -> Config:
         gps=_build(GPSConfig, raw.get("gps")),
         imu=_build(IMUConfig, raw.get("imu")),
         logger=_build(LoggerConfig, raw.get("logger")),
+        led=_build(LedConfig, raw.get("led")),
         device=_build(DeviceConfig, raw.get("device")),
     )
 

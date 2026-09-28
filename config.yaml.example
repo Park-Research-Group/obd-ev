@@ -104,6 +104,19 @@ logger:
   # device returns from a participant.
   uploaded_subdir: uploaded
 
+# Onboard status LED, so you can tell what the kit is doing in a car with no
+# terminal:
+#   solid on          connected, vehicle data coming back
+#   fast blink        connected, but the vehicle answers nothing (car asleep?)
+#   slow blink        running, no OBD adapter found
+#   off               logger not running
+# Taking over ACT costs you the SD-card activity indication.
+led:
+  enabled: true
+  path: /sys/class/leds/ACT   # PWR is the other onboard LED on a Pi 4/5
+  max_brightness: 1
+  invert: false
+
 # Each device tags every CSV row so logs from many participants don't get
 # mixed up after upload. Set per-device in /etc/default/obd-ev
 # (OBD_EV_DEVICE_ID); falls back to hostname.

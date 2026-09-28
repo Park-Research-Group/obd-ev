@@ -82,6 +82,7 @@ src/obd_ev/
   ble_obd.py      BLE ELM327, Mode 01 PIDs        naming.py   column names
   gps_reader.py   gpsd                            logger.py   CSV writer
   imu_reader.py   MPU-6050                        config.py   YAML + env
+  led.py          status LED (OBD link state)
   provision/      participant WiFi portal (AP, captive page, in-browser PBKDF2)
 scripts/
   setup_kit.sh        build one SD card, start to finish
@@ -91,7 +92,7 @@ scripts/
   upload.sh           rclone upload              authorize_kit.sh  cloned cards
   self_update.sh      pull + apply, on connect   post_update.sh    apply an update
   obd_watch.py        live decoded OBD signals   bt_prepare.sh     BT state repair
-  obd_probe.py        BLE adapter bench check
+  obd_probe.py        BLE adapter bench check    led_prepare.sh    LED handover
 tests/            decoder, portal, logger, naming
 vehicles/         vendored OBDb profiles + catalogue
 ```

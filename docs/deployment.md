@@ -336,6 +336,33 @@ would force you to stop the logger and stop testing the real thing.
 Lower level, if you need it: `cgps -s` or `gpspipe -w` for GPS, and
 `i2cdetect -y 1` (in `/usr/sbin`) to confirm the IMU answers at `0x68`.
 
+## Status LED
+
+The onboard green `ACT` LED shows the OBD link state, so you can read the kit in
+a car without a terminal:
+
+| LED | Meaning |
+|---|---|
+| **solid on** | connected, and vehicle data is coming back |
+| **fast blink** (~3/s) | connected, but every command returns nothing — usually the car is asleep; an EV must be in **READY** |
+| **slow blink** (~1/s) | running, no OBD adapter found |
+| **off** | logger not running |
+
+Distinguishing the two blink rates is the point: "found the adapter but the car
+is asleep" and "cannot find the adapter" need different fixes, and this tells
+them apart without a laptop.
+
+`ACT` normally shows SD-card activity; the logger takes it over, which is the
+trade for an explicit status light. `scripts/led_prepare.sh` detaches the kernel
+trigger and hands the brightness file to the service user, as root, from the
+service's `ExecStartPre` — so it survives reboots without intervention. Turn it
+off or move it to `PWR` in `config.yaml`:
+
+```yaml
+led:
+  enabled: false
+```
+
 ## When something does not work
 
 Every entry here is a failure seen on real hardware.

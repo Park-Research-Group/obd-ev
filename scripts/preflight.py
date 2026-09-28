@@ -235,6 +235,33 @@ def check_bluetooth(cfg):
                "pinning obd.ble_address is faster and more reliable")
 
 
+def check_led(cfg):
+    section("Status LED")
+    if not cfg.led.enabled:
+        record("WARN", "status LED disabled in config")
+        return
+    led = Path(cfg.led.path)
+    if not led.is_dir():
+        record("WARN", f"no LED at {led}",
+               "set led.path, or led.enabled: false")
+        return
+    brightness = led / "brightness"
+    if os.access(brightness, os.W_OK):
+        record("PASS", f"LED writable: {brightness}")
+    else:
+        record("WARN", f"{brightness} not writable by this user",
+               "the service fixes this itself via led_prepare.sh at start; "
+               "only a problem if it persists after a restart")
+    trigger = (led / "trigger")
+    if trigger.exists():
+        active = trigger.read_text()
+        if "[none]" in active:
+            record("PASS", "LED trigger detached")
+        else:
+            record("WARN", "LED still owned by a kernel trigger",
+                   "led_prepare.sh detaches it at service start")
+
+
 # -- upload path ------------------------------------------------------------
 
 def check_upload(quick):
@@ -371,6 +398,7 @@ def main() -> int:
     check_gps(cfg)
     check_imu(cfg)
     check_bluetooth(cfg)
+    check_led(cfg)
     check_storage(cfg)
     check_upload(args.quick)
     check_services()
