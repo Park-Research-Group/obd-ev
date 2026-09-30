@@ -385,6 +385,13 @@ locked. Stepping the clock to 2019 would be worse than leaving it wrong.
 
 Preflight compares the clock to GPS and **fails** at more than an hour's skew.
 
+**A garage start stalls nothing.** The clock check runs in its own timer unit —
+the logger does not depend on it, does not wait for it, and keeps recording with
+empty `lat`/`lon` until a fix arrives. With no fix the check gives up after a
+dozen reports rather than holding open for its full timeout, and returns in 15
+minutes. GPS also keeps working normally once the car leaves the garage; only
+the rows written before the first fix carry a bad `timestamp`.
+
 ### Recovering timestamps after the fact
 
 Every row carries three time references, so a drifted clock loses nothing:

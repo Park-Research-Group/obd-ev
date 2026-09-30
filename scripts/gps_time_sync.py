@@ -71,8 +71,19 @@ def decide(offsets, threshold=DEFAULT_THRESHOLD, force=False):
     return gps_epoch, f"clock is {offset:+.2f}s from GPS"
 
 
+# A car often starts in a garage. Give up quickly rather than holding the
+# service open for the full timeout: the timer comes back in 15 minutes, and
+# the logger does not wait on any of this.
+NO_FIX_REPORTS_BEFORE_GIVING_UP = 12
+SOCKET_TIMEOUT = 5.0
+
+
 def collect(timeout: float):
-    """Gather trusted (gps_epoch, system_epoch) pairs from gpsd."""
+    """Gather trusted (gps_epoch, system_epoch) pairs from gpsd.
+
+    Returns as soon as it has two usable readings, or early if the receiver
+    clearly has no fix. Never blocks longer than `timeout`.
+    """
     try:
         from gps import gps, WATCH_ENABLE, WATCH_NEWSTYLE
     except ImportError:
@@ -84,19 +95,34 @@ def collect(timeout: float):
         log.error("cannot reach gpsd: %s", exc)
         return []
 
-    trusted, deadline = [], time.time() + timeout
+    # Without this, session.next() blocks indefinitely when gpsd goes quiet and
+    # the deadline below is never re-checked.
+    sock = getattr(session, "sock", None)
+    if sock is not None:
+        try:
+            sock.settimeout(SOCKET_TIMEOUT)
+        except OSError:
+            pass
+
+    trusted, deadline, no_fix = [], time.time() + timeout, 0
     while time.time() < deadline and len(trusted) < 2:
         try:
             report = session.next()
         except StopIteration:
             break
         except Exception:
+            # Socket timeout or a malformed report; the deadline decides.
             continue
         if getattr(report, "class", None) != "TPV":
             continue
         mode = getattr(report, "mode", 0) or 0
         stamp = getattr(report, "time", None)
         if mode < 2 or not stamp:
+            no_fix += 1
+            if no_fix >= NO_FIX_REPORTS_BEFORE_GIVING_UP:
+                log.info("no GPS fix after %d reports (garage? cold start?); "
+                         "leaving the clock alone", no_fix)
+                break
             continue
         try:
             # gpsd emits RFC3339 with a Z suffix.
