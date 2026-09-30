@@ -55,6 +55,21 @@ done
 rm -rf "$tmp_units"
 [ "$changed" = 1 ] && systemctl daemon-reload
 
+# Enable anything an update introduced. Copying a unit file is not enough --
+# without this a new timer ships to every kit and never fires.
+# obd-ev-provision is deliberately excluded: it raises the setup AP, and
+# setup_kit.sh decides when a kit is ready for that.
+for unit in obd-ev.service obd-ev-upload.timer obd-ev-timesync.timer; do
+    [ -f "/etc/systemd/system/$unit" ] || continue
+    state="$(systemctl is-enabled "$unit" 2>/dev/null)"
+    case "$state" in
+        enabled|enabled-runtime|static|indirect) ;;
+        *) systemctl enable "$unit" >/dev/null 2>&1 \
+               && echo "post_update: enabled $unit" ;;
+    esac
+done
+systemctl start obd-ev-timesync.timer >/dev/null 2>&1 || true
+
 # -- helper scripts installed outside the repo ------------------------------
 if [ -f "$REPO_DIR/scripts/nm-dispatcher-upload" ]; then
     install -m 755 "$REPO_DIR/scripts/nm-dispatcher-upload" \

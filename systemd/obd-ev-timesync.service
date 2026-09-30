@@ -1,0 +1,11 @@
+[Unit]
+Description=obd-ev set the clock from GPS
+After=gpsd.service
+Wants=gpsd.service
+
+[Service]
+Type=oneshot
+# Root: it sets the system clock. Harmless if there is no fix yet -- it logs
+# why and exits 0.
+ExecStart=@VENV_DIR@/bin/python @REPO_DIR@/scripts/gps_time_sync.py
+TimeoutStartSec=120

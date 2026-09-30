@@ -93,6 +93,7 @@ scripts/
   self_update.sh      pull + apply, on connect   post_update.sh    apply an update
   obd_watch.py        live decoded OBD signals   bt_prepare.sh     BT state repair
   obd_probe.py        BLE adapter bench check    led_prepare.sh    LED handover
+  gps_time_sync.py    set the clock from GPS
 tests/            decoder, portal, logger, naming
 vehicles/         vendored OBDb profiles + catalogue
 ```

@@ -1,0 +1,15 @@
+[Unit]
+Description=obd-ev periodic GPS clock check
+
+[Timer]
+# Two minutes after boot: long enough for a cold GPS start, and the logger has
+# already opened its trip file by then, so early rows may still carry a bad
+# timestamp. t_mono and gps_time are what make those recoverable; only an RTC
+# would fix them outright.
+OnBootSec=2min
+OnUnitActiveSec=15min
+Persistent=true
+Unit=obd-ev-timesync.service
+
+[Install]
+WantedBy=timers.target

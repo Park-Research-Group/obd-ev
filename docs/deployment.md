@@ -363,6 +363,46 @@ led:
   enabled: false
 ```
 
+## Clock and timestamps
+
+A Pi has no RTC. At boot it restores whatever `fake-hwclock` last saved, and if
+NTP is unreachable it stays there. Kit P001 drifted to **1.05 days behind** while
+still reporting `System clock synchronized: yes`, which put every wall-clock
+timestamp in a 10 km drive a day out.
+
+`obd-ev-timesync.timer` corrects this from GPS, which needs no network — 2 min
+after boot, then every 15 min:
+
+```bash
+sudo ./scripts/gps_time_sync.py --dry-run   # report the offset, change nothing
+sudo ./scripts/gps_time_sync.py --force     # step now, any offset
+```
+
+It will only move the clock on a **2D-or-better fix**, a **plausible year**, and
+**two readings that agree**. That is not paranoia: gpsd emits a `time` field even
+with no fix, and was observed reporting `2019-04-07` on a receiver that had never
+locked. Stepping the clock to 2019 would be worse than leaving it wrong.
+
+Preflight compares the clock to GPS and **fails** at more than an hour's skew.
+
+### Recovering timestamps after the fact
+
+Every row carries three time references, so a drifted clock loses nothing:
+
+| column | reference | use |
+|---|---|---|
+| `timestamp` | Pi clock | wrong when the clock is out |
+| `t_mono` | monotonic since boot | intervals and rates, always valid within a boot |
+| `gps_time` | GPS receiver | absolute truth, present whenever there is a fix |
+
+Measure a trip's clock error by differencing `timestamp` against `gps_time` in
+rows that have both, then re-stamp the file offline. The offset is constant
+within a boot.
+
+Two rows in the data stay unavoidably wrong: the logger opens its trip file
+before any fix exists, so the first rows of each boot predate the correction.
+Only a DS3231 RTC on the IMU's I2C bus fixes that outright.
+
 ## When something does not work
 
 Every entry here is a failure seen on real hardware.
@@ -380,6 +420,7 @@ Every entry here is a failure seen on real hardware.
 | `no I2C device at 0x68` | IMU wiring — SDA pin 3, SCL pin 5. Note many boards sold as MPU-6050 are actually MPU-6500 (`WHO_AM_I` returns `0x70`); the driver works either way. |
 | Uploads stop weeks in | Two kits sharing one cloud token. Each card built by `setup_kit.sh` gets its own; a *cloned* card needs `authorize_kit.sh`. Compare `token_fingerprint` in `/var/lib/obd-ev/upload-authorized.json` across kits. |
 | Participant gets no setup page | `/var/lib/obd-ev/provisioned.json` still exists from your testing. Remove it before shipping. |
+| Timestamps a day out | No RTC and no reachable NTP. `sudo scripts/gps_time_sync.py --force`, and check `obd-ev-timesync.timer` is enabled. Recover existing data from `gps_time`. |
 | Kit stops self-updating | `not a fast-forward` — `deploy` diverged from `main`. Treat `deploy` as merge-only. |
 
 ## When a kit comes back

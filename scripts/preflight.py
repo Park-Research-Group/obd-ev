@@ -163,6 +163,29 @@ def check_gps(cfg):
         record("WARN", "could not read from gpsd",
                "install gpsd-clients, or check DEVICES in /etc/default/gpsd")
         return
+    # A clock silently a day out poisons every timestamp in the dataset, and
+    # "System clock synchronized: yes" was reported on a kit 1.05 days behind.
+    # GPS time is the only reference that does not need a network.
+    import re as _re
+    gps_times = _re.findall(r'"time":"([0-9T:\-\.]+)Z?"', out.stdout)
+    if gps_times and '"mode":[23]' in out.stdout.replace(" ", "") or gps_times:
+        try:
+            import datetime as _dt
+            gt = _dt.datetime.strptime(gps_times[-1].split(".")[0],
+                                       "%Y-%m-%dT%H:%M:%S")
+            skew = (_dt.datetime.utcnow() - gt).total_seconds()
+            if abs(skew) < 5:
+                record("PASS", f"clock agrees with GPS ({skew:+.1f}s)")
+            elif abs(skew) < 3600:
+                record("WARN", f"clock is {skew:+.0f}s off GPS",
+                       "obd-ev-timesync.timer corrects this within 15 min")
+            else:
+                record("FAIL", f"clock is {skew/86400:+.2f} days off GPS",
+                       "every timestamp in the data is wrong by this much. "
+                       "Fix now: sudo scripts/gps_time_sync.py --force")
+        except (ValueError, IndexError):
+            pass
+
     if '"class":"TPV"' in out.stdout:
         has_fix = '"lat"' in out.stdout
         record("PASS" if has_fix else "WARN",

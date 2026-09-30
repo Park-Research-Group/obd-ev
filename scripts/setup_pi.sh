@@ -143,6 +143,9 @@ sudo systemctl enable obd-ev.service
 # mode, which would disconnect whoever is building the card. setup_kit.sh
 # arms it once the rest of the kit is verified.
 sudo systemctl enable obd-ev-upload.timer
+# No RTC on a Pi: without this a kit with no reachable NTP drifts, and the
+# wall-clock timestamps in the data go with it.
+sudo systemctl enable obd-ev-timesync.timer
 
 echo "[8/8] default env file"
 # Default env file (overridable per-device).
