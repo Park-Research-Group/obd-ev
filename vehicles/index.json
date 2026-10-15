@@ -1212,13 +1212,17 @@
   },
   {
    "name": "Chevrolet-Bolt-EUV",
-   "commands": 107,
-   "signals": 107,
+   "commands": 292,
+   "signals": 293,
    "services": [
     "22"
    ],
    "groups": {
+    "Engine": 159,
     "Battery": 106,
+    "Transmission": 18,
+    "Control": 6,
+    "Doors": 3,
     "Movement": 1
    },
    "years": [

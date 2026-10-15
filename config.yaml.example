@@ -78,6 +78,36 @@ vehicle:
   include_paths: []              # e.g. [Battery, Movement] to narrow collection
   exclude_paths: []              # e.g. [DTCs]
 
+  # Signal-level selection, by OBDb signal id; shell globs allowed. This is
+  # the knob that decides how fast the reader comes back: every command is
+  # one BLE round trip, and a command whose signals are all deselected is
+  # never sent. The full Bolt EUV signalset is 292 commands (96 of them
+  # per-module pack voltages at 10s); the list below is 15.
+  #
+  # Leave empty to collect everything the path filters left.
+  #
+  # This is the P001 set: cabin climate load, regen and driver demand,
+  # ambient temperature, speed, and the few battery values that give those
+  # numbers context. Acceleration comes from the IMU, not from OBD.
+  include_signals:
+    - BOLT_VSS                      # vehicle speed, 0.25s
+    - BOLT_AIR_TEMP_AMBIENT_2       # ambient air temperature (ECM), 1C
+    - BOLT_AIR_TEMP_UNFILTERED      # ambient air temperature (HVAC), 0.5C
+    - BOLT_CABIN_AC_MEAS_W          # A/C on, and how hard: watts drawn
+    - BOLT_CABIN_HEATER_MEAS_W      # heat on, and how hard: watts drawn
+    - BOLT_CABIN_AC_COMP            # A/C compressor command
+    - BOLT_CABIN_BLOWER_MOTOR       # blower speed request
+    - BOLT_REGEN_BRAKING_AXLE       # regen braking axle torque requested
+    - BOLT_REGEN_BRAKING_AXLE_TQ    # regen braking axle torque predicted
+    - BOLT_BRAKE_PEDAL_POS          # brake pedal, to separate regen from friction
+    - BOLT_AXLE_TQ_DRIVER_REQ       # driver demand, signed: drive vs lift-off
+    - BOLT_THROTTLE_POS_CALC        # accelerator position
+    - BOLT_HVBAT_SOC_DISPLAY        # state of charge
+    - BOLT_HVBAT_TEMP               # pack temperature
+    - BOLT_HIGH_V_CURRENT           # pack current, signed: regen is negative
+  exclude_signals: []              # e.g. [BOLT_HVBAT_CMU*] to drop the
+                                   # per-module pack voltages but keep the rest
+
 gps:
   enabled: true
   host: 127.0.0.1

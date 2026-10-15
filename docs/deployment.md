@@ -32,7 +32,7 @@ participant WiFi credentials — they enter them on the device.
 ## Vehicle selection
 
 ```
-  1) Chevrolet-Bolt-EUV               107 signals   107 commands  2022-2023
+  1) Chevrolet-Bolt-EUV               293 signals   292 commands  2022-2023
   2) Hyundai-IONIQ-5                  389 signals    34 commands  2021-2027
   0) (no profile)                  generic Mode 01, works on any OBD-II vehicle
   s) search all 205 known vehicles
@@ -56,6 +56,51 @@ the catalogue when OBDb adds models:
 ```bash
 ./scripts/build_index.py
 ```
+
+## Narrowing what the kit asks for
+
+Every command is one BLE round trip, so the size of the signal set *is* the
+row rate: the full Bolt EUV set is 292 commands, 96 of them per-module pack
+voltages that say nothing about how the car is being driven. Pick the signals
+the study needs, by OBDb id, in `config.yaml`:
+
+```yaml
+vehicle:
+  include_signals:
+    - BOLT_VSS
+    - BOLT_CABIN_AC_MEAS_W
+    - BOLT_REGEN_BRAKING_AXLE
+    # ...
+  exclude_signals: []         # globs allowed: BOLT_HVBAT_CMU*
+```
+
+Shipped in `config.yaml.example` is the P001 set — 15 commands: ambient
+temperature, cabin heat and A/C load, regen and driver demand, speed, and the
+battery values that give those context. Acceleration comes from the IMU.
+
+A command keeps only its selected signals, and one with none left is never
+sent. An `include_signals` pattern matching nothing is a warning in the
+journal, not a silent missing column:
+
+```
+vehicle.include_signals pattern 'BOLT_VSSS' matches no signal in …
+```
+
+List what a profile offers before editing the list:
+
+```bash
+python - <<'EOF'
+import sys; sys.path.insert(0, "src")
+from obd_ev.obdb import SignalSet
+for c in SignalSet.load("vehicles/Chevrolet-Bolt-EUV.json").commands:
+    for s in c.signals:
+        print(f"{s.id:34} {s.name}")
+EOF
+```
+
+The coarser `include_paths` / `exclude_paths` filter whole OBDb categories
+(`Battery.Modules`, `Climate`). They are a blunt instrument on GM profiles,
+where 159 of the Bolt's signals share the path `Engine`.
 
 ## Cloud upload
 

@@ -77,6 +77,14 @@ class VehicleConfig:
     retry_disabled_after: float = 300.0
     include_paths: List[str] = field(default_factory=list)
     exclude_paths: List[str] = field(default_factory=list)
+    # Signal-level selection, by OBDb signal id, with shell globs
+    # (`BOLT_CABIN_*`). Narrower than the path filters above, which on some
+    # models -- the Bolt, where 159 signals share the path `Engine` -- are
+    # too coarse to pick out the handful of values a study actually needs.
+    # `include_signals` empty means every signal the path filters left.
+    # Fewer signals is a faster loop: each command is one BLE round trip.
+    include_signals: List[str] = field(default_factory=list)
+    exclude_signals: List[str] = field(default_factory=list)
 
 
 @dataclass

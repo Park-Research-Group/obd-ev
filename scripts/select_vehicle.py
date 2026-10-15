@@ -196,9 +196,10 @@ def describe(profile, year):
     for group, n in sorted(groups.items(), key=lambda kv: -kv[1])[:8]:
         print(f"    {n:>4}  {group}")
     if commands > 40:
-        print(f"\n  Note: {commands} commands is a lot for a BLE adapter. If the"
-              f"\n  achieved row rate is too low, narrow it with "
-              f"vehicle.exclude_paths\n  in config.yaml.")
+        print(f"\n  Note: {commands} commands is a lot for a BLE adapter -- each"
+              f"\n  one is a round trip. If the achieved row rate is too low,"
+              f"\n  list the signals you need in vehicle.include_signals in"
+              f"\n  config.yaml (see docs/deployment.md).")
 
 
 def read_env_lines():

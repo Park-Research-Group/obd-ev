@@ -103,15 +103,56 @@ def check_vehicle(cfg):
                    f"{cfg.vehicle.year or '(any year)'}",
            f"{len(ss.commands)} commands, {signals} signals")
 
+    polled = check_signal_selection(cfg, ss)
+
     meta_path = path.with_suffix(".meta.json")
     if meta_path.exists() and cfg.vehicle.year:
         years = json.loads(meta_path.read_text()).get("years") or []
         if years and cfg.vehicle.year not in years:
             record("WARN", f"model year {cfg.vehicle.year} outside "
                            f"{years[0]}-{years[-1]} for this model")
-    if len(ss.commands) > 40:
-        record("WARN", f"{len(ss.commands)} commands is a lot for a BLE link",
-               "expect a low row rate; consider vehicle.exclude_paths")
+    if polled > 40:
+        record("WARN", f"{polled} commands is a lot for a BLE link",
+               "expect a low row rate; narrow it with vehicle.include_signals")
+
+
+def check_signal_selection(cfg, ss):
+    """How much of the profile this kit actually polls, and whether every
+    configured pattern matched something. Returns the command count.
+
+    A pattern that matches nothing costs a column in every CSV of the study,
+    and nothing about a running kit makes that visible -- so it is worth a
+    line here, before the card goes into a car.
+    """
+    import fnmatch
+
+    patterns = cfg.vehicle.include_signals + cfg.vehicle.exclude_signals
+    if not patterns:
+        return len(ss.commands)
+
+    available = [s.id for c in ss.commands for s in c.signals]
+    unmatched = [p for p in patterns
+                 if not any(fnmatch.fnmatchcase(i, p) for i in available)]
+    for pattern in unmatched:
+        record("WARN", f"signal pattern {pattern!r} matches nothing",
+               "a typo here is a column silently missing from every trip")
+
+    from obd_ev.vehicle import VehicleReader
+    reader = VehicleReader(cfg.obd, cfg.vehicle, adapter=_NoAdapter())
+    polled = len(reader._schedule)
+    if not polled:
+        record("FAIL", "the signal filters select nothing",
+               "no vehicle data would be recorded at all; check "
+               "vehicle.include_signals against this profile")
+        return polled
+    record("PASS", f"polling {polled} of {len(ss.commands)} commands",
+           f"{len(reader.field_names())} signals selected")
+    return polled
+
+
+class _NoAdapter:
+    """VehicleReader builds its schedule in __init__ and touches the adapter
+    only on connect(); preflight never gets that far."""
 
 
 # -- python and hardware ----------------------------------------------------

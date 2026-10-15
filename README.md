@@ -39,6 +39,12 @@ scripts/select_vehicle.py            # pick from a list, 's' to search 205 cars
 scripts/build_index.py               # refresh the catalogue
 ```
 
+A profile is usually larger than a study needs — the Bolt EUV's is 292
+commands, 96 of them per-module pack voltages — and each command is one BLE
+round trip. `vehicle.include_signals` in `config.yaml` lists the OBDb signal
+ids to poll and nothing else; the shipped list is 15, the P001 set
+([docs/deployment.md](docs/deployment.md#narrowing-what-the-kit-asks-for)).
+
 Without a profile it falls back to 16 Mode 01 PIDs chosen for EV relevance,
 probed against what the vehicle actually answers
 ([docs/pid_reference.md](docs/pid_reference.md)).

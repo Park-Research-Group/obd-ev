@@ -262,6 +262,51 @@ class TestSchedule(unittest.TestCase):
         reader = make_reader(ScriptedAdapter(), exclude_paths=["Battery"])
         self.assertEqual(reader.field_names(), ["cabin_temp_c"])
 
+    def test_signal_filters_narrow_collection(self):
+        reader = make_reader(ScriptedAdapter(), include_signals=["SOC"])
+        self.assertEqual(reader.field_names(), ["state_of_charge_pct"])
+        reader = make_reader(ScriptedAdapter(), exclude_signals=["ABSENT"])
+        self.assertEqual(sorted(reader.field_names()),
+                         ["cabin_temp_c", "state_of_charge_pct"])
+
+    def test_signal_filters_accept_globs(self):
+        reader = make_reader(ScriptedAdapter(), include_signals=["CABIN_*"])
+        self.assertEqual(reader.field_names(), ["cabin_temp_c"])
+
+    def test_deselected_signals_cost_no_request(self):
+        """The point of the filter: a command nobody wants is never sent."""
+        adapter = ScriptedAdapter()
+        reader = make_reader(adapter, include_signals=["SOC"])
+        make_due(reader)
+        reader.read()
+        self.assertEqual([c for c in adapter.sent if not c.startswith("AT")],
+                         ["220101"])
+
+    def test_a_command_keeps_only_its_selected_signals(self):
+        """Two signals in one response, one of them wanted: the command is
+        still polled, but the unwanted signal stays out of the CSV."""
+        signalset = {"commands": [{
+            "hdr": "7E4", "rax": "7EC", "cmd": {"22": "0101"}, "freq": 0.25,
+            "signals": [
+                {"id": "SOC", "name": "State of charge", "path": "Battery",
+                 "fmt": {"bix": 0, "len": 8, "max": 100, "div": 2,
+                         "unit": "percent"}},
+                {"id": "SOC_RAW", "name": "State of charge raw",
+                 "path": "Battery",
+                 "fmt": {"bix": 8, "len": 8, "max": 255, "unit": "percent"}},
+            ]}]}
+        adapter = ScriptedAdapter(replies={"220101": "7EC0562010164C8"})
+        reader = make_reader(adapter, signalset=signalset,
+                             include_signals=["SOC"])
+        self.assertEqual(reader.field_names(), ["state_of_charge_pct"])
+        make_due(reader)
+        self.assertEqual(reader.read(), {"state_of_charge_pct": 50.0})
+
+    def test_a_pattern_matching_nothing_is_logged(self):
+        with self.assertLogs("obd_ev.vehicle", level="WARNING") as logs:
+            make_reader(ScriptedAdapter(), include_signals=["SOC", "TPYO"])
+        self.assertTrue(any("TPYO" in line for line in logs.output), logs.output)
+
 
 if __name__ == "__main__":
     unittest.main()

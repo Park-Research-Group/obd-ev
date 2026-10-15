@@ -13,10 +13,11 @@ reassembles ISO-TP itself, which is the format OBDb's published test vectors
 are recorded in (see tests/test_obdb.py).
 """
 
+import fnmatch
 import logging
 import time
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from dataclasses import dataclass, replace
+from typing import Dict, List, Optional, Sequence, Tuple
 
 from .ble_obd import BleElm327, Elm327Timeout, OBDLinkDown
 from .config import OBDConfig, VehicleConfig
@@ -62,8 +63,11 @@ class VehicleReader:
         self._failures = 0
         self._pinned = False
         self._warned_headers: set = set()
-        log.info("loaded %s: %d commands, %d signals",
-                 vcfg.signalset, len(self._schedule), len(self.field_names()))
+        self._warn_unmatched(vcfg.include_signals, "include_signals")
+        self._warn_unmatched(vcfg.exclude_signals, "exclude_signals")
+        log.info("loaded %s: %d commands, %d signals (of %d commands in the "
+                 "signalset)", vcfg.signalset, len(self._schedule),
+                 len(self.field_names()), len(self.signalset.commands))
 
     def _build_schedule(self) -> List[_Scheduled]:
         out = []
@@ -78,6 +82,9 @@ class VehicleReader:
                     s.path.startswith(p) for s in command.signals
                     for p in self.vcfg.include_paths):
                 continue
+            command = self._select_signals(command)
+            if command is None:
+                continue
             period = max(command.freq or self.vcfg.default_period,
                          self.vcfg.min_period)
             out.append(_Scheduled(command, period))
@@ -87,6 +94,39 @@ class VehicleReader:
         if self.vcfg.max_commands:
             out = out[:self.vcfg.max_commands]
         return out
+
+    def _select_signals(self, command):
+        """Keep only the signals this kit asked for, or None if the command
+        now carries none and need not be polled at all.
+
+        Signals are dropped from the command itself rather than filtered out
+        of the decoded row, so an unwanted signal costs nothing: a command
+        every one of whose signals was dropped is never requested.
+        """
+        keep = [s for s in command.signals if self._wanted(s.id)]
+        if not keep:
+            return None
+        if len(keep) == len(command.signals):
+            return command
+        return replace(command, signals=tuple(keep))
+
+    def _wanted(self, signal_id: str) -> bool:
+        if any(fnmatch.fnmatchcase(signal_id, p)
+               for p in self.vcfg.exclude_signals):
+            return False
+        if not self.vcfg.include_signals:
+            return True
+        return any(fnmatch.fnmatchcase(signal_id, p)
+                   for p in self.vcfg.include_signals)
+
+    def _warn_unmatched(self, patterns: Sequence[str], what: str) -> None:
+        """A pattern that matches nothing is almost always a typo, and its
+        cost is a column quietly missing from every CSV of the study."""
+        available = set(self.signalset.signal_ids())
+        for pattern in patterns:
+            if not any(fnmatch.fnmatchcase(i, pattern) for i in available):
+                log.warning("vehicle.%s pattern %r matches no signal in %s",
+                            what, pattern, self.vcfg.signalset)
 
     def connect(self) -> None:
         self.adapter.connect()
