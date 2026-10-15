@@ -144,7 +144,8 @@ lying about older trips.
 
 A **new trip** starts on logger start and when the vehicle returns after
 `trip_gap_seconds`. A **new part** starts every `rotate_minutes` while driving,
-every `idle_rotate_minutes` (6 h) while parked, and when a trip goes quiet. On
+every `idle_rotate_minutes` (6 h) while parked, when a trip goes quiet, and
+when the Pi comes online mid-drive (see below). On
 most cars power dies with the ignition, so one trip is one power cycle. The
 logger records its open file in `logs/.current`; `upload.sh` re-checks it
 before every file it touches, but only while the service is running — after an
@@ -154,6 +155,62 @@ names are UTC, like the `timestamp` column.
 Uploads fire on the NetworkManager dispatcher hook the moment the Pi joins a
 network, with a one-minute timer as backstop. Shipped trips move to
 `logs/uploaded/<trip>/`, pruned to the most recent 64.
+
+### Cleaned data, uploaded alongside the raw
+
+After shipping the raw files, each run cleans the archive with
+`scripts/clean_trips.py` and uploads the result, so the cloud folder holds
+analysis-ready CSVs without anyone running anything:
+
+```
+obd-ev-uploads/P003/20260906_142201_a3f9c1d2/   # raw, as above
+                   /P003_cleaned/trips/P003_20260906T142201Z_a3f9c1d2.csv
+                                /signals.csv
+                                /trips_summary.csv
+                                /obd_timing.csv
+                                /cleaning_report.txt
+```
+
+Timing and ordering are deliberate:
+
+- **The archive, after the raw upload** — not the pending folder before it. A
+  trip's parts upload one at a time and move to the archive as they go, so
+  mid-run a trip can be split across both and would clean as two half trips.
+  A part whose upload failed arrives next run, when the trip is cleaned again
+  and the output overwritten; the filename is the trip's start and boot id, so
+  it is stable.
+- **Only when something new shipped**, or when `P003_cleaned/` is missing (the
+  first run after this landed). The timer fires every minute and re-cleaning
+  the whole archive each time would burn CPU and card writes for no change.
+- **`copy --checksum`, never `sync`.** Every run rewrites every cleaned file,
+  so modification times always differ and only content should decide what goes
+  over the wire. `sync` would delete cleaned trips from the cloud once their
+  raw data ages out of the local archive.
+- **Cleaning never fails the run.** The raw upload is the job, and it has
+  already happened by this point; a cleaning problem is logged and skipped.
+
+Aggregates (`trips_summary.csv`, `obd_timing.csv`, `cleaning_report.txt`) are
+rewritten from whatever is in the archive, so they cover the most recent 64
+trips. The per-trip CSVs accumulate in the cloud and are not pruned with it.
+
+| Variable | Default | |
+|---|---|---|
+| `OBD_EV_CLEAN` | `1` | `0` turns cleaning off; raw upload is unaffected |
+| `OBD_EV_CLEAN_ARGS` | *(empty)* | extra cleaner flags, e.g. `--fill` |
+| `OBD_EV_PYTHON` | `python3` | the cleaner needs no packages |
+
+`--fill` is off by default: it carries each signal forward over the rows that
+did not sample it, which is a choice about the analysis rather than a cleanup,
+and without it the upload is strictly what the car reported.
+
+Each run first asks the logger to close the part it has open, by creating
+`logs/.flush-request` and waiting for the logger to delete it. This is what
+saves the end of a drive: reaching home WiFi with the engine running is the
+last moment the kit has power on a car that de-energises the OBD port with the
+key, and without it that part stays open, unuploaded, until the ignition kills
+it. The logger declines while parked — those rows rotate on their own, and
+honouring it would mean a new file every minute — and a logger too old to know
+about the file is simply waited out for 15 s.
 
 ## Remote updates
 

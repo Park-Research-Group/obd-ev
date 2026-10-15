@@ -38,6 +38,33 @@ def _dictionary(link) -> list:
     return rows
 
 
+# Least time between two flushes we will honour. NetworkManager reports a
+# connection up more than once, and the upload timer runs every minute.
+FLUSH_MIN_GAP = 30.0
+
+
+def should_flush(rows: int, trip_closed: bool, now: float,
+                 last_flush_at: float, min_gap: float = FLUSH_MIN_GAP) -> bool:
+    """Whether a flush request should close the part being written.
+
+    A flush exists to save the tail of a drive. A kit powered from the OBD port
+    dies with the ignition, well before `trip_gap_seconds` would have closed
+    the file, and the uploader never touches an open file -- so reaching home
+    WiFi with the engine still running is the last chance to close it.
+
+    Declined when there is nothing to gain:
+
+    * no rows -- nothing to save, and rotating would only churn the filename;
+    * parked (`trip_closed`) -- those rows rotate on `idle_rotate_minutes`, and
+      a handful of them lost to a power cut is not worth a new file on every
+      upload run for as long as the car sits at home;
+    * just flushed -- see FLUSH_MIN_GAP.
+    """
+    if rows <= 0 or trip_closed:
+        return False
+    return now - last_flush_at >= min_gap
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="obd-ev")
     parser.add_argument("--config", default="config.yaml")
@@ -90,6 +117,7 @@ def main() -> int:
     idle_rotate_after = cfg.logger.idle_rotate_minutes * 60.0
     last_obd_at = time.monotonic()
     trip_closed = False
+    last_flush_at = float("-inf")
 
     try:
         while not stop:
@@ -128,6 +156,22 @@ def main() -> int:
             if obd_values:
                 last_obd_at = now
 
+            # The uploader asking for the open part, because the Pi is online
+            # and this may be the last moment the kit has power.
+            if csv_log.flush_requested():
+                if should_flush(csv_log.rows, trip_closed, now, last_flush_at):
+                    log.info("flush requested, closing part (%d rows)",
+                             csv_log.rows)
+                    csv_log.rotate()
+                    last_flush_at = now
+                else:
+                    log.debug("flush request declined (%d rows, parked=%s)",
+                              csv_log.rows, trip_closed)
+                # Cleared after rotating, and whether or not we rotated: this
+                # is the uploader's only ack, and it must not start scanning
+                # while rotate() is mid-flight.
+                csv_log.clear_flush_request()
+
             # End the trip once the vehicle has been unreachable for a while,
             # so the file closes and the upload timer can ship it.
             gap = now - last_obd_at
@@ -154,7 +198,7 @@ def main() -> int:
                 # Sleep in slices so shutdown stays responsive at idle_hz,
                 # where a period can be several seconds.
                 deadline = time.monotonic() + remaining
-                while not stop:
+                while not stop and not csv_log.flush_requested():
                     left = deadline - time.monotonic()
                     if left <= 0:
                         break

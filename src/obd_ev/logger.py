@@ -33,6 +33,10 @@ def _boot_id() -> str:
 
 BOOT_ID = _boot_id()
 
+# Files in the log directory that scripts/upload.sh reads and writes.
+CURRENT_MARKER = ".current"
+FLUSH_REQUEST = ".flush-request"
+
 
 def write_signal_dictionary(output_dir, rows: List[Dict], device_id: str = "") -> Path:
     """Write signals.csv: one row per CSV column, saying what it is.
@@ -63,6 +67,7 @@ class CsvLogger:
             drive_P003_20260906_143701.csv   <- part, after a 15-minute rotation
             signals_P003.csv
         .current                        <- path of the file being written now
+        .flush-request                  <- asks us to close that file early
 
     A trip ends when the vehicle goes away and comes back, or when the kit
     loses power -- which on most cars is the moment the ignition goes off, so
@@ -89,6 +94,9 @@ class CsvLogger:
         self._n = 0
         self._opened_at = 0.0
         self._last_flush = 0.0
+        # A request left behind by a power cut belongs to a part that no longer
+        # exists. Honouring it would rotate a brand-new file for no reason.
+        self.clear_flush_request()
         self.new_trip()
 
     # -- trip and part management -------------------------------------------
@@ -157,10 +165,29 @@ class CsvLogger:
             closing.unlink(missing_ok=True)   # don't ship a header-only file
         self._open_part()
 
+    # -- request file the uploader writes -----------------------------------
+
+    def flush_requested(self) -> bool:
+        """Has something asked us to close the open part early?
+
+        A file rather than a signal, deliberately. A logger that predates this
+        feature ignores the file, where an unhandled SIGUSR1 would terminate
+        it -- and after a hand-run `git pull` the uploader on disk is new while
+        the running logger is still old, which is exactly when that would bite.
+        """
+        return (self.root / FLUSH_REQUEST).exists()
+
+    def clear_flush_request(self) -> None:
+        """Acknowledge the request. The uploader waits for this."""
+        try:
+            (self.root / FLUSH_REQUEST).unlink(missing_ok=True)
+        except OSError as exc:
+            log.debug("could not clear the flush request: %s", exc)
+
     # -- pointer file the uploader reads ------------------------------------
 
     def _mark_current(self, path: Optional[Path]) -> None:
-        marker = self.root / ".current"
+        marker = self.root / CURRENT_MARKER
         try:
             if path is None:
                 marker.unlink(missing_ok=True)
