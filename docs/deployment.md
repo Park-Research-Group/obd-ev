@@ -61,29 +61,53 @@ the catalogue when OBDb adds models:
 
 Every command is one BLE round trip, so the size of the signal set *is* the
 row rate: the full Bolt EUV set is 292 commands, 96 of them per-module pack
-voltages that say nothing about how the car is being driven. Pick the signals
-the study needs, by OBDb id, in `config.yaml`:
+voltages that say nothing about how the car is being driven.
+
+The selection ships **with the vehicle profile**, in a sidecar beside it:
+
+```
+vehicles/Chevrolet-Bolt-EUV.json           the signalset, from OBDb
+vehicles/Chevrolet-Bolt-EUV.collect.json   what this study polls from it
+```
+
+```json
+{
+ "include_signals": ["BOLT_VSS", "BOLT_CABIN_*", "BOLT_REGEN_*"],
+ "exclude_signals": []
+}
+```
+
+Both files are tracked, so a revised list reaches a kit exactly the way a
+revised signalset does — on the next update. Keeping the list in `config.yaml`
+instead does not work: that file is gitignored and written once per kit at
+imaging time, so `git pull` can never change it, and a kit would take a new
+292-command signalset with no selection to go with it.
+
+The shipped Bolt list is the P001 set — 15 commands: ambient temperature,
+cabin heat and A/C load, regen and driver demand, speed, and the battery
+values that give those context. Acceleration comes from the IMU.
+
+A kit can still override it in `config.yaml`, which wins per key:
 
 ```yaml
 vehicle:
-  include_signals:
-    - BOLT_VSS
-    - BOLT_CABIN_AC_MEAS_W
-    - BOLT_REGEN_BRAKING_AXLE
-    # ...
-  exclude_signals: []         # globs allowed: BOLT_HVBAT_CMU*
+  include_signals: [BOLT_VSS, BOLT_CABIN_*]   # empty list = take the sidecar
+  exclude_signals: [BOLT_HVBAT_CMU*]          # globs allowed
 ```
 
-Shipped in `config.yaml.example` is the P001 set — 15 commands: ambient
-temperature, cabin heat and A/C load, regen and driver demand, speed, and the
-battery values that give those context. Acceleration comes from the IMU.
+Override there rather than editing the tracked sidecar on the kit: a repo with
+local modifications makes `self_update.sh` refuse to update at all. An empty
+list is not an override — use `["*"]` to deliberately collect everything.
 
 A command keeps only its selected signals, and one with none left is never
-sent. An `include_signals` pattern matching nothing is a warning in the
-journal, not a silent missing column:
+sent. A pattern matching nothing is a warning in the journal, not a silent
+missing column, and `preflight.py` reports the same before a card goes out:
 
 ```
 vehicle.include_signals pattern 'BOLT_VSSS' matches no signal in …
+
+  PASS  polling 15 of 292 commands
+        15 signals selected
 ```
 
 List what a profile offers before editing the list:
@@ -271,10 +295,34 @@ OBD_EV_AUTO_UPDATE=1               # 0 opts this kit out
 OBD_EV_UPDATE_BRANCH=deploy        # default: deploy
 OBD_EV_UPDATE_MIN_INTERVAL=3600    # seconds between checks (counted from the
                                    # last check that actually reached GitHub)
+OBD_EV_UPDATE_MAX_DEFER=21600      # 6h: longest an update waits for a drive
+                                   # to end before taking it mid-drive
 ```
 
 A kit built before the update hooks existed needs them installed once by hand
 (`sudo ./scripts/post_update.sh`); after that, updates install their own.
+
+**What triggers a check.** Two things: a NetworkManager dispatcher hook on
+connect, and `obd-ev-update.timer` hourly. The timer is not belt-and-braces —
+it is what makes the check happen at all on a kit powered from the OBD port.
+Such a kit is online only while the car is on, which is exactly when the
+vehicle is connected and an update defers; with the hook alone it would wait
+for a connect that only ever happens mid-drive, and never update.
+
+**Deferring a drive, but not forever.** An update that arrives mid-drive waits,
+because restarting the logger splits the trip. After `OBD_EV_UPDATE_MAX_DEFER`
+it stops waiting: it asks the logger to close the open part (the same
+`.flush-request` handshake the uploader uses, so the drive survives as a
+complete file), then updates. Nothing is written to the repo before that
+decision, so a deferred update never leaves the running logger on code that
+no longer matches the working tree.
+
+**A dead logger cannot block its own repair.** The drive check reads
+`logs/.current`, which is removed on a clean close — and these kits die with
+the ignition instead, so the marker usually outlives the drive that wrote it.
+`self_update.sh` therefore asks systemd whether `obd-ev` is actually running
+before believing the marker. Without that, a crash-looping logger would defer
+every update forever, including the one that fixes it.
 
 > **Understand the blast radius.** Anyone who can push to `deploy` gets root on
 > every kit, including ones in participants' vehicles. Promote to it
@@ -386,6 +434,7 @@ journalctl -u obd-ev-update --no-pager -n 30
 ./scripts/sensors.py              # live GPS + IMU        --gps / --imu / --once
 ./scripts/obd_probe.py            # BLE adapter: scan, connect, handshake, first commands
 ./scripts/obd_watch.py            # live decoded vehicle signals    --all / --once
+./scripts/dashboard.py            # whole-kit status, with signal ages  --once
 journalctl -u obd-ev -f           # connection and trip events
 sudo systemctl start obd-ev-upload
 ```
@@ -434,6 +483,14 @@ clean run means the logging path works, not merely that something is on the bus.
 `obd_watch.py` reads the trip CSV rather than opening its own BLE connection,
 because only one connection to the adapter is allowed — a tool that grabbed it
 would force you to stop the logger and stop testing the real thing.
+
+`dashboard.py` does the same, and adds the rest of the kit: link state, GPS
+fix, IMU, free space, upload backlog, and how long ago each signal last
+answered — which is what catches the one signal that goes quiet mid-drive while
+everything else looks healthy. On a test kit with the 7" touchscreen attached
+it runs full-screen as a service, so a drive can be watched from the driver's
+seat; over SSH the same view prints as text. **Test kits only**, and read-only
+by construction — see [docs/dashboard.md](dashboard.md).
 
 Lower level, if you need it: `cgps -s` or `gpspipe -w` for GPS, and
 `i2cdetect -y 1` (in `/usr/sbin`) to confirm the IMU answers at `0x68`.

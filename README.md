@@ -41,8 +41,15 @@ scripts/build_index.py               # refresh the catalogue
 
 A profile is usually larger than a study needs — the Bolt EUV's is 292
 commands, 96 of them per-module pack voltages — and each command is one BLE
-round trip. `vehicle.include_signals` in `config.yaml` lists the OBDb signal
-ids to poll and nothing else; the shipped list is 15, the P001 set
+round trip. A sidecar beside the profile lists the OBDb signal ids actually
+polled, so it updates with the profile:
+
+```
+vehicles/Chevrolet-Bolt-EUV.json           292 commands, from OBDb
+vehicles/Chevrolet-Bolt-EUV.collect.json   the 15 this study reads
+```
+
+`vehicle.include_signals` in `config.yaml` overrides it per kit
 ([docs/deployment.md](docs/deployment.md#narrowing-what-the-kit-asks-for)).
 
 Without a profile it falls back to 16 Mode 01 PIDs chosen for EV relevance,
@@ -165,6 +172,8 @@ scripts/
   obd_probe.py        BLE adapter bench check    led_prepare.sh    LED handover
   clean_trips.py      offline data cleanup (standalone, no dependencies)
   gps_time_sync.py    set the clock from GPS
+  dashboard.py        7" touchscreen status display  (test kits only,
+  install_dashboard.sh  put it on one kit             read-only, opt-in)
 tests/            decoder, portal, logger, naming, cleaner, upload
 vehicles/         vendored OBDb profiles + catalogue
 ```
@@ -173,6 +182,7 @@ vehicles/         vendored OBDb profiles + catalogue
 
 - Researchers building kits: [docs/deployment.md](docs/deployment.md)
 - Participants receiving one: [docs/participant.md](docs/participant.md)
+- Debugging from the car: [docs/dashboard.md](docs/dashboard.md)
 
 ## Notes
 

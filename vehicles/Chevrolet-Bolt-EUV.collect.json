@@ -1,0 +1,30 @@
+{
+ "_comment": [
+  "What the kit polls from Chevrolet-Bolt-EUV.json, by OBDb signal id.",
+  "Shell globs allowed. The full signalset is 292 commands and each one is a",
+  "BLE round trip, so this list -- not the column count -- sets the row rate.",
+  "vehicle.include_signals in config.yaml overrides this file.",
+  "",
+  "The P001 set: cabin climate load, regen and driver demand, ambient",
+  "temperature, speed, and the battery values those need for context.",
+  "Acceleration comes from the IMU, not from OBD."
+ ],
+ "include_signals": [
+  "BOLT_VSS",
+  "BOLT_AIR_TEMP_AMBIENT_2",
+  "BOLT_AIR_TEMP_UNFILTERED",
+  "BOLT_CABIN_AC_MEAS_W",
+  "BOLT_CABIN_HEATER_MEAS_W",
+  "BOLT_CABIN_AC_COMP",
+  "BOLT_CABIN_BLOWER_MOTOR",
+  "BOLT_REGEN_BRAKING_AXLE",
+  "BOLT_REGEN_BRAKING_AXLE_TQ",
+  "BOLT_BRAKE_PEDAL_POS",
+  "BOLT_AXLE_TQ_DRIVER_REQ",
+  "BOLT_THROTTLE_POS_CALC",
+  "BOLT_HVBAT_SOC_DISPLAY",
+  "BOLT_HVBAT_TEMP",
+  "BOLT_HIGH_V_CURRENT"
+ ],
+ "exclude_signals": []
+}

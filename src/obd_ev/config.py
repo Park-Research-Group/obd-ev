@@ -199,6 +199,59 @@ def _sanitize(cfg: "Config") -> None:
         cfg.device.id = str(cfg.device.id)
 
 
+def collection_profile_path(signalset: str | Path) -> Path:
+    """`vehicles/Chevrolet-Bolt-EUV.json` -> `…-EUV.collect.json`."""
+    return Path(signalset).with_suffix(".collect.json")
+
+
+def _apply_collection_profile(cfg: "Config", vehicle_raw: dict) -> None:
+    """Take the signal selection that ships with the vehicle profile.
+
+    `config.yaml` is in .gitignore and is written once, per kit, at imaging
+    time -- so a selection that lives only there can never be changed by an
+    update, while the signalset it selects from is updated by every `git
+    pull`. The sidecar keeps the two together: both are tracked, both ship on
+    the `deploy` branch, and a kit picks up a revised list the same way it
+    picks up a revised signalset.
+
+    `config.yaml` still wins where it says anything, so a kit can be tuned in
+    the field without editing a tracked file (which would make `self_update`
+    refuse to update it at all).
+    """
+    if not cfg.vehicle.signalset:
+        return
+    path = collection_profile_path(cfg.vehicle.signalset)
+    if not path.exists():
+        return
+    try:
+        with path.open() as fh:
+            doc = yaml.safe_load(fh) or {}       # JSON is a subset of YAML
+    except Exception as exc:
+        log.warning("ignoring %s: %s", path.name, exc)
+        return
+    if not isinstance(doc, dict):
+        log.warning("ignoring %s: not a mapping", path.name)
+        return
+    for key in ("include_signals", "exclude_signals"):
+        # An empty list counts as unset, not as "collect nothing": the key is
+        # present and empty in config.yaml.example, and a kit that copied it
+        # must still get the shipped selection. `["*"]` collects everything.
+        if vehicle_raw.get(key):
+            continue                              # config.yaml wins
+        value = doc.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, list) or not all(isinstance(v, str)
+                                                  for v in value):
+            log.warning("ignoring %s in %s: not a list of signal ids",
+                        key, path.name)
+            continue
+        setattr(cfg.vehicle, key, list(value))
+        if value:
+            log.info("%s: %d %s from %s", cfg.vehicle.make_model or path.stem,
+                     len(value), key, path.name)
+
+
 def load(path: str | Path = "config.yaml") -> Config:
     p = Path(path)
     raw = {}
@@ -244,5 +297,6 @@ def load(path: str | Path = "config.yaml") -> Config:
     # systemd happened to start us.
     if cfg.vehicle.signalset and not Path(cfg.vehicle.signalset).is_absolute():
         cfg.vehicle.signalset = str(REPO_ROOT / cfg.vehicle.signalset)
+    _apply_collection_profile(cfg, raw.get("vehicle") or {})
     _sanitize(cfg)
     return cfg
