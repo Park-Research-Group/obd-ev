@@ -1,0 +1,18 @@
+[Unit]
+Description=Periodically check for obd-ev updates
+
+[Timer]
+# The dispatcher hook covers the common case -- the kit reaching WiFi -- but
+# it fires on connect and nothing else. An update declined because a drive
+# was in progress would otherwise wait for the *next* connect, which on a kit
+# powered from the OBD port is the next drive, with the vehicle connected
+# again. This is what makes "defer until the trip ends" a deferral rather
+# than a refusal.
+OnBootSec=5min
+OnUnitActiveSec=1h
+# A kit is off far more than it is on; catch up rather than skip.
+Persistent=true
+Unit=obd-ev-update.service
+
+[Install]
+WantedBy=timers.target

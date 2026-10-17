@@ -55,11 +55,34 @@ done
 rm -rf "$tmp_units"
 [ "$changed" = 1 ] && systemctl daemon-reload
 
+# The touchscreen dashboard, refreshed only where it is already installed.
+# Its template lives in systemd/optional/ so it never reaches a participant
+# kit; without this, the one test kit that has it would keep running whatever
+# unit file it was installed with. Never enables it -- install_dashboard.sh
+# is the only thing that does that.
+DASH=obd-ev-dashboard.service
+if [ -f "/etc/systemd/system/$DASH" ] \
+        && [ -f "$REPO_DIR/systemd/optional/$DASH" ]; then
+    tmp_dash="$(mktemp)"
+    sed -e "s|@REPO_DIR@|$REPO_DIR|g" \
+        -e "s|@VENV_DIR@|$VENV_DIR|g" \
+        -e "s|@INSTALL_USER@|$OWNER|g" \
+        "$REPO_DIR/systemd/optional/$DASH" > "$tmp_dash"
+    if ! cmp -s "$tmp_dash" "/etc/systemd/system/$DASH"; then
+        cp "$tmp_dash" "/etc/systemd/system/$DASH"
+        systemctl daemon-reload
+        systemctl try-restart "$DASH" >/dev/null 2>&1 || true
+        echo "post_update: updated $DASH"
+    fi
+    rm -f "$tmp_dash"
+fi
+
 # Enable anything an update introduced. Copying a unit file is not enough --
 # without this a new timer ships to every kit and never fires.
 # obd-ev-provision is deliberately excluded: it raises the setup AP, and
 # setup_kit.sh decides when a kit is ready for that.
-for unit in obd-ev.service obd-ev-upload.timer obd-ev-timesync.timer; do
+for unit in obd-ev.service obd-ev-upload.timer obd-ev-timesync.timer \
+            obd-ev-update.timer; do
     [ -f "/etc/systemd/system/$unit" ] || continue
     state="$(systemctl is-enabled "$unit" 2>/dev/null)"
     case "$state" in
@@ -69,6 +92,9 @@ for unit in obd-ev.service obd-ev-upload.timer obd-ev-timesync.timer; do
     esac
 done
 systemctl start obd-ev-timesync.timer >/dev/null 2>&1 || true
+# Started, not just enabled: the kit that installs this update is the one that
+# most needs the retry, and waiting for its next boot defeats the point.
+systemctl start obd-ev-update.timer >/dev/null 2>&1 || true
 
 # -- helper scripts installed outside the repo ------------------------------
 if [ -f "$REPO_DIR/scripts/nm-dispatcher-upload" ]; then
