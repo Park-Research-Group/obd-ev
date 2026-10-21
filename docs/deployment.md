@@ -10,9 +10,14 @@ another device refreshes it, so all but the first kit silently stop uploading.
    enable SSH, configure your own WiFi.
 2. ```bash
    ssh <user>@raspberrypi.local
-   git clone https://github.com/ethanmathias/obd-ev && cd obd-ev
+   git clone -b deploy https://github.com/Park-Research-Group/obd-ev && cd obd-ev
    ./scripts/setup_kit.sh
    ```
+
+   Clone `deploy`, not `main`: it is what the fleet runs, and a card built
+   from it is a tracking branch from the start. A card built from `main` is
+   moved across by its first self-update, which works, but until then it is
+   running something no other kit is.
 
 10–15 minutes, mostly unattended package installation. Safe to re-run — every
 step is idempotent, so a failure means fix-and-rerun, not start over.

@@ -21,7 +21,7 @@ One script per SD card. No master image.
 
 ```bash
 # flash Raspberry Pi OS Lite (64-bit), boot, then:
-git clone https://github.com/ethanmathias/obd-ev && cd obd-ev
+git clone https://github.com/Park-Research-Group/obd-ev && cd obd-ev
 ./scripts/setup_kit.sh
 ```
 

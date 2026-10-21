@@ -2,7 +2,7 @@
 # Build one participant kit, from a freshly flashed SD card to ready-to-ship.
 #
 #   ssh <user>@raspberrypi.local
-#   git clone https://github.com/ethanmathias/obd-ev && cd obd-ev
+#   git clone https://github.com/Park-Research-Group/obd-ev && cd obd-ev
 #   ./scripts/setup_kit.sh
 #
 # Run this once per card. There is no master image to clone, which is
