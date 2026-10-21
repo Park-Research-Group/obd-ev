@@ -156,18 +156,30 @@ if [ "$FORCE" != 1 ] && trip_in_progress; then
 fi
 rm -f "$DEFERRED"
 
+# Why git refused matters more than that it refused: the usual cause is a
+# file someone copied onto the kit by hand, at a path an update now also
+# carries. `git status --untracked-files=no` above calls that repo clean, and
+# git will not clobber it -- so without this the journal blames a
+# non-fast-forward for what is really one stray file, and the kit quietly
+# stops updating for good.
+explain_git_failure() {
+    [ -n "$1" ] && printf '%s\n' "$1" | sed 's/^/    /'
+}
+
 if [ "$current" != "$branch" ]; then
     # A kit built from main needs to move onto the release branch once, so
     # that later updates are ordinary fast-forwards of a tracking branch.
     log "switching from $current to $branch"
-    if ! git_as checkout -B "$branch" --track "origin/$branch" --quiet; then
+    if ! err="$(git_as checkout -B "$branch" --track "origin/$branch" 2>&1)"; then
         log "could not check out $branch"
+        explain_git_failure "$err"
         exit 1
     fi
 else
     log "updating $branch: ${before:0:8} -> ${remote:0:8}"
-    if ! git_as merge --ff-only "origin/$branch" --quiet; then
-        log "not a fast-forward -- refusing to update"
+    if ! err="$(git_as merge --ff-only "origin/$branch" 2>&1)"; then
+        log "cannot fast-forward to origin/$branch -- refusing to update"
+        explain_git_failure "$err"
         exit 1
     fi
 fi

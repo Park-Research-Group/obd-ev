@@ -41,8 +41,14 @@ case "$1 ${2:-}" in
     "rev-parse origin/deploy") cat "$FAKE_LOG/remote" ;;
     "fetch --quiet")          [ -f "$FAKE_LOG/fetch-fails" ] && exit 1 ;;
     "status --porcelain")     cat "$FAKE_LOG/dirty" 2>/dev/null ;;
-    "merge --ff-only")        cat "$FAKE_LOG/remote" > "$FAKE_LOG/head" ;;
-    "checkout -B")            cat "$FAKE_LOG/remote" > "$FAKE_LOG/head" ;;
+    "merge --ff-only"|"checkout -B")
+        if [ -f "$FAKE_LOG/merge-fails" ]; then
+            cat "$FAKE_LOG/merge-fails" >&2
+            exit 1
+        fi
+        cat "$FAKE_LOG/remote" > "$FAKE_LOG/head"
+        echo "deploy" > "$FAKE_LOG/branch"
+        ;;
 esac
 exit 0
 """
@@ -255,6 +261,47 @@ class TestTheLoggerCannotBlockItsOwnRepair(SelfUpdateHarness):
         self.assertEqual(self.head(), "bbbbbbbb")
 
 
+class TestGettingOntoTheReleaseBranch(SelfUpdateHarness):
+    """A card is built from a clone of whatever branch; the fleet runs
+    `deploy`. The first update has to move it across."""
+
+    def test_a_kit_on_main_is_switched_to_deploy(self):
+        (self.fake / "branch").write_text("main\n")
+        result = self.run_update()
+        self.assertIn("switching from main to deploy", result.stdout)
+        self.assertEqual((self.fake / "branch").read_text().strip(), "deploy")
+        self.assertEqual(self.ran(), ["post_update", "preflight"])
+
+    def test_the_switch_also_waits_for_a_drive_to_end(self):
+        (self.fake / "branch").write_text("main\n")
+        self.driving()
+        self.run_update()
+        self.assertEqual((self.fake / "branch").read_text().strip(), "main")
+
+
+class TestARefusalSaysWhy(SelfUpdateHarness):
+    """The usual cause is a file copied onto the kit by hand at a path the
+    update also carries: git will not clobber it, `status
+    --untracked-files=no` calls the repo clean, and the kit then stops
+    updating for good. The journal has to name the file."""
+
+    def test_the_git_error_reaches_the_journal(self):
+        (self.fake / "merge-fails").write_text(
+            "error: The following untracked working tree files would be "
+            "overwritten by merge:\n\tscripts/dashboard.py\n")
+        result = self.run_update()
+        self.assertIn("scripts/dashboard.py", result.stdout)
+        self.assertIn("refusing to update", result.stdout)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(self.ran(), [], "nothing applied after a refusal")
+
+    def test_local_edits_are_refused_with_the_file_named(self):
+        (self.fake / "dirty").write_text(" M src/obd_ev/logger.py\n")
+        result = self.run_update()
+        self.assertIn("local modifications", result.stdout)
+        self.assertEqual(result.returncode, 1)
+
+
 class TestForceAndRateLimit(SelfUpdateHarness):
     def test_force_ignores_a_drive_in_progress(self):
         self.driving()
@@ -289,6 +336,12 @@ class TestTheRetryExists(unittest.TestCase):
         body = timer.read_text()
         self.assertIn("Unit=obd-ev-update.service", body)
         self.assertIn("OnUnitActiveSec=", body)
+
+    def test_a_fresh_card_enables_it_too(self):
+        """post_update only runs on an update; a card built today has to
+        come up with the retry already armed."""
+        body = (REPO_ROOT / "scripts" / "setup_pi.sh").read_text()
+        self.assertIn("systemctl enable obd-ev-update.timer", body)
 
     def test_post_update_enables_it(self):
         """Copying a unit file is not enough: a timer nothing enables ships

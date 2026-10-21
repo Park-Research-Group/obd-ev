@@ -146,6 +146,10 @@ sudo systemctl enable obd-ev-upload.timer
 # No RTC on a Pi: without this a kit with no reachable NTP drifts, and the
 # wall-clock timestamps in the data go with it.
 sudo systemctl enable obd-ev-timesync.timer
+# The hourly retry behind the update hook. The hook alone only fires on
+# connect, which on a kit powered from the OBD port means mid-drive, which is
+# when an update defers -- see scripts/self_update.sh.
+sudo systemctl enable obd-ev-update.timer
 
 echo "[8/8] default env file"
 # Default env file (overridable per-device).
