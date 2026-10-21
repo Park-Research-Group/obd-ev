@@ -1,0 +1,48 @@
+# Touchscreen dashboard. Test kits only -- scripts/install_dashboard.sh puts
+# this on one kit by hand.
+#
+# It lives under systemd/optional/ rather than systemd/ on purpose: setup_pi.sh
+# and post_update.sh both glob systemd/*.service, so anything in there is
+# copied to every participant kit. Nothing in this directory is.
+
+[Unit]
+Description=obd-ev touchscreen dashboard (test kits only)
+# Ordered after the logger so the screen comes up with a trip already open.
+# Wants, never Requires or BindsTo: the dashboard observes the logger and must
+# never be able to hold it back or take it down.
+After=obd-ev.service
+Wants=obd-ev.service
+
+[Service]
+Type=simple
+User=@INSTALL_USER@
+# KMS/DRM for the display, input for the touch panel. No X or Wayland.
+SupplementaryGroups=video render input
+WorkingDirectory=@REPO_DIR@
+EnvironmentFile=-/etc/default/obd-ev
+Environment=PYTHONPATH=@REPO_DIR@/src
+Environment=SDL_VIDEODRIVER=kmsdrm
+Environment=SDL_AUDIODRIVER=dummy
+
+# The logger wins every contest for the CPU and the card. A redraw is twice a
+# second and reads a few kilobytes, so in practice there is nothing to
+# contend over -- this is here so that stays true if that ever changes.
+Nice=10
+CPUWeight=20
+IOSchedulingClass=idle
+
+# The script only ever reads. This is what makes that a guarantee rather than
+# a claim: with the whole filesystem mounted read-only for this process, a bug
+# here cannot truncate a trip CSV, clear the .current marker or leave a stray
+# .flush-request behind. If the display will not start, take this off first.
+ProtectSystem=strict
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+ExecStart=@VENV_DIR@/bin/python @REPO_DIR@/scripts/dashboard.py \
+    --config @REPO_DIR@/config.yaml
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
