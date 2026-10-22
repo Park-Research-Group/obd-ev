@@ -12,13 +12,14 @@ one. Everything else about it is the same kit.
 | Vehicle | `Chevrolet-Bolt-EUV` 2023 → polls 15 of 292 commands |
 | Upload | rclone `obd-ev` → Box |
 | Dashboard | session autostart; screen and touch both working |
-| Networks | lab WiFi, phone hotspot, and whatever else you add below |
+| Networks | home WiFi (what it joins in practice), phone hotspot for driving, lab WiFi if added |
 
 ## Adding a WiFi network
 
-This kit keeps several: the lab, a phone hotspot for driving, and a
-participant's home network when it is standing in for one. Add them from the
-terminal rather than through the setup portal — the portal is for a kit with
+This kit keeps several. In practice it joins the **home** network it was
+set up on; the phone hotspot is for driving, and the lab network is only
+there if you add it. Add them from the terminal rather than through the
+setup portal — the portal is for a kit with
 no screen, it only speaks open and WPA2-PSK, and arming it on this kit would
 take `wlan0` into AP mode and drop your SSH.
 
@@ -51,10 +52,16 @@ sudo nmcli connection up lab
 one is in range. Higher wins:
 
 ```bash
-sudo nmcli connection modify "lab"     connection.autoconnect-priority 20
-sudo nmcli connection modify "home"    connection.autoconnect-priority 10
+sudo nmcli connection modify "home"    connection.autoconnect-priority 20
+sudo nmcli connection modify "lab"     connection.autoconnect-priority 10
 sudo nmcli connection modify "iPhone"  connection.autoconnect-priority 1
 ```
+
+Put the network the kit actually lives on at the top. If it keeps choosing
+one you did not expect, the priorities are the thing to look at first —
+without them NetworkManager picks among whatever is in range, and the kit
+can sit on a hotspot for days while a home network it also knows is two
+metres away.
 
 Check what the kit knows and what it is on now:
 
@@ -161,8 +168,8 @@ the real result of the first drive.
 
 ## Driving it around
 
-Uploads and self-updates will run over whatever network is in range, which
-on the road is the phone hotspot. Raw trip parts are small — about 164 KB
+Uploads and self-updates run over whatever network is in range: the home
+WiFi while parked, the phone hotspot on the road. Raw trip parts are small — about 164 KB
 each on P001 — but `upload.sh` also re-cleans and re-ships the whole archive
 whenever a new part lands, and that bundle only grows (18 MB on P001 after a
 month). On a hotspot that is the expensive part:
