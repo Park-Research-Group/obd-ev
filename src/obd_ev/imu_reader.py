@@ -73,6 +73,11 @@ class IMUReader:
             return
 
         period = 1.0 / max(1, self.cfg.sample_hz)
+        # Sampling deadline, advanced by one period each pass. Sleeping a
+        # whole period *after* the read instead makes the real interval
+        # read + period: on a Pi the i2c read is around 5ms, so a kit asked
+        # for 100 Hz delivered 66, and the shortfall moved with bus load.
+        next_at = time.monotonic()
         a = self.cfg.lowpass_alpha
         f = IMUSample()
         primed = False
@@ -132,7 +137,18 @@ class IMUReader:
                 self._mag_max = mag if not self._count else max(self._mag_max, mag)
                 self._mag_min = mag if not self._count else min(self._mag_min, mag)
                 self._count += 1
-            time.sleep(period)
+
+            next_at += period
+            delay = next_at - time.monotonic()
+            if delay > 0:
+                # wait(), not sleep(): stop() is then acted on immediately
+                # rather than after the rest of the period.
+                self._stop.wait(delay)
+            else:
+                # Fell behind -- a slow read, or the scheduler went
+                # elsewhere. Start the next period from now rather than
+                # trying to win back time that has gone.
+                next_at = time.monotonic()
 
     def latest(self) -> Dict[str, float]:
         """Filtered sample plus the extremes seen since the previous call.
