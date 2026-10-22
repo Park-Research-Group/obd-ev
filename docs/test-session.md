@@ -87,6 +87,33 @@ access-point mode at boot, which drops their WiFi and your SSH together.
 
 ## 2. In the car
 
+### Pinout
+
+Physical pin positions on the 40-pin header, counted from the corner nearest
+the SD card: odd numbers down one side, even down the other.
+
+| GPS (GY-NEO6MV2) | Pi pin | | IMU (GY-521 / MPU-6050) | Pi pin |
+|---|---|---|---|---|
+| VCC | **1** (3.3 V) | | VCC | **1** (3.3 V) |
+| GND | 6 | | GND | 9 |
+| TX | 10 (GPIO15 / RXD) | | SDA | 3 (GPIO2) |
+| RX | 8 (GPIO14 / TXD) | | SCL | 5 (GPIO3) |
+
+Three things that are easy to get wrong:
+
+* **GPS TX goes to the Pi's RX**, and RX to TX. Straight-through wiring gives
+  you a device that exists and never speaks.
+* **Both boards want 3.3 V, and there is only one pin 1** — they share it, so
+  splice or use a rail. Not 5 V: the GY-521's logic is 3.3 V.
+* **The grounds are different pins** (6 for the GPS, 9 for the IMU) only
+  because it keeps the runs short; any ground pin works.
+
+The OBD adapter is BLE — no wiring at all. On this Pi 4 the GPS lands on
+`/dev/ttyS0` (the mini UART); `/dev/ttyAMA0` is Bluetooth and must stay that
+way, or you lose the adapter. Full detail and the Pi 5 differences are in
+[wiring.md](wiring.md).
+
+
 1. OBD-II adapter into the port under the dash, driver's side.
 2. Pi powered from the car USB-C supply.
 3. Screen, if it is coming: HDMI to the socket **nearest the USB-C power

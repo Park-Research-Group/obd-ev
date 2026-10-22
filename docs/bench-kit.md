@@ -131,12 +131,15 @@ with cautions is in [wiring.md](wiring.md).
 
 | GPS | Pi pin | | IMU | Pi pin |
 |---|---|---|---|---|
+| VCC | **1** (3.3 V) | | VCC | **1** (3.3 V) |
 | GND | 6 | | GND | 9 |
 | TX | 10 (GPIO15 / RXD) | | SDA | 3 (GPIO2) |
 | RX | 8 (GPIO14 / TXD) | | SCL | 5 (GPIO3) |
 
 GPS TX goes to the Pi's **RX**, and vice versa — the one that is easy to get
-backwards, and it produces a device that exists and never speaks.
+backwards, and it produces a device that exists and never speaks. Both
+boards take 3.3 V from pin 1, so they share it; not 5 V, the GY-521's logic
+is 3.3 V.
 
 `setup_pi.sh` wrote `enable_uart=1`, which needs a reboot before
 `/dev/ttyS0` exists at all. After wiring, reboot and take the sensors one at
