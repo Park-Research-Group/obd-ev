@@ -139,6 +139,7 @@ writes `~/.config/autostart/obd-ev-dashboard.desktop` instead, and
 
 A desktop bench kit is deliberately **not** a participant kit any more. A
 display fault you hit on one will not necessarily reproduce on the other.
+Setting one up end to end: [bench-kit.md](bench-kit.md).
 
 ## When it does not come up
 

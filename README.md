@@ -183,6 +183,7 @@ vehicles/         vendored OBDb profiles + catalogue
 - Researchers building kits: [docs/deployment.md](docs/deployment.md)
 - Participants receiving one: [docs/participant.md](docs/participant.md)
 - Debugging from the car: [docs/dashboard.md](docs/dashboard.md)
+- The bench kit with a screen: [docs/bench-kit.md](docs/bench-kit.md)
 
 ## Notes
 
