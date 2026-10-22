@@ -1,0 +1,18 @@
+# Which kits take the commits on this branch.
+#
+# One device id per line; shell globs allowed; `#` comments and blank lines
+# ignored. Read by scripts/self_update.sh from the commit being offered, so
+# the push itself decides who takes it.
+#
+#   *          the whole fleet -- the normal state
+#   P002       only the bench kit, to prove a change before it reaches a car
+#   P00[12]    a named subset
+#
+# Leave this at `*` unless a rollout is actually in progress, and put it back
+# in the same session: a kit left off the list silently stops updating, and
+# nothing on the kit says why except one line in `journalctl -u obd-ev-update`.
+#
+# A missing or empty file means every kit, so deleting it is also a safe way
+# back. `sudo ./scripts/self_update.sh --force` on a kit ignores this
+# entirely.
+*

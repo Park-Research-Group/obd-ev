@@ -41,6 +41,11 @@ case "$1 ${2:-}" in
     "rev-parse origin/deploy") cat "$FAKE_LOG/remote" ;;
     "fetch --quiet")          [ -f "$FAKE_LOG/fetch-fails" ] && exit 1 ;;
     "status --porcelain")     cat "$FAKE_LOG/dirty" 2>/dev/null ;;
+    "show "*)
+        # `git show <commit>:deploy-targets`
+        [ -f "$FAKE_LOG/targets" ] || exit 128
+        cat "$FAKE_LOG/targets"
+        ;;
     "merge --ff-only"|"checkout -B")
         if [ -f "$FAKE_LOG/merge-fails" ]; then
             cat "$FAKE_LOG/merge-fails" >&2
@@ -316,6 +321,101 @@ class TestARefusalSaysWhy(SelfUpdateHarness):
         result = self.run_update()
         self.assertIn("local modifications", result.stdout)
         self.assertEqual(result.returncode, 1)
+
+
+class TestTargetingByDeviceId(SelfUpdateHarness):
+    """`deploy-targets` on the branch names the kits a commit is for, so a
+    change can be proven on the bench kit before it reaches a car."""
+
+    def targets(self, body):
+        (self.fake / "targets").write_text(body)
+
+    def run_as(self, device_id, *args, **env):
+        return self.run_update(*args, OBD_EV_DEVICE_ID=device_id, **env)
+
+    def test_no_targets_file_means_every_kit(self):
+        """The file is absent on every commit made before this existed."""
+        self.assertEqual(self.run_as("P001").returncode, 0)
+        self.assertEqual(self.head(), "bbbbbbbb")
+
+    def test_a_star_means_every_kit(self):
+        self.targets("*\n")
+        self.run_as("P001")
+        self.assertEqual(self.head(), "bbbbbbbb")
+
+    def test_a_kit_not_named_stays_where_it_is(self):
+        self.targets("# bench only\nP002\n")
+        result = self.run_as("P001")
+        self.assertEqual(self.head(), "aaaaaaaa")
+        self.assertEqual(self.ran(), [], "nothing applied on an untargeted kit")
+        self.assertEqual(result.returncode, 0, "not an error, just not for us")
+        self.assertIn("not for P001", result.stdout)
+
+    def test_the_named_kit_takes_it(self):
+        self.targets("# bench only\nP002\n")
+        self.run_as("P002")
+        self.assertEqual(self.head(), "bbbbbbbb")
+
+    def test_globs_and_comments(self):
+        self.targets("  # staging\n\n  P00[12]  # the two real kits\n")
+        self.run_as("P002")
+        self.assertEqual(self.head(), "bbbbbbbb")
+        self.setUp()
+        self.targets("P00[12]\n")
+        self.run_as("P999")
+        self.assertEqual(self.head(), "aaaaaaaa")
+
+    def test_the_list_is_read_from_the_incoming_commit(self):
+        """A kit's own copy is a commit behind by definition, so reading the
+        working tree would make it impossible to add a kit to the list."""
+        self.targets("P002\n")
+        self.run_as("P002")
+        calls = [c for c in self.git_calls() if " show " in f" {c} "]
+        self.assertTrue(calls, "the targets file was never read from git")
+        self.assertTrue(any("bbbbbbbb:deploy-targets" in c for c in calls),
+                        f"read from the wrong commit: {calls}")
+
+    def test_an_empty_list_means_every_kit(self):
+        """Fail open: the alternative strands the fleet, including the push
+        that would fix it."""
+        self.targets("# everyone was removed by accident\n\n")
+        self.run_as("P001")
+        self.assertEqual(self.head(), "bbbbbbbb")
+
+    def test_force_ignores_targeting(self):
+        self.targets("P002\n")
+        self.run_as("P001", "--force")
+        self.assertEqual(self.head(), "bbbbbbbb")
+
+    def test_a_skip_is_logged_once_per_commit_not_once_per_check(self):
+        """At a five-minute cadence, logging every check would be 288
+        identical lines a day."""
+        self.targets("P002\n")
+        first = self.run_as("P001")
+        self.assertIn("not for P001", first.stdout)
+        second = self.run_as("P001", OBD_EV_UPDATE_MIN_INTERVAL="0")
+        self.assertNotIn("not for P001", second.stdout)
+        # ...until the branch moves on to a commit it has not reported.
+        (self.fake / "remote").write_text("cccccccc\n")
+        third = self.run_as("P001", OBD_EV_UPDATE_MIN_INTERVAL="0")
+        self.assertIn("not for P001", third.stdout)
+
+    def test_a_targeted_commit_clears_the_skip_record(self):
+        self.targets("P002\n")
+        self.run_as("P001")
+        self.assertTrue((self.state / "update-skipped-commit").exists())
+        self.targets("*\n")
+        self.run_as("P001", OBD_EV_UPDATE_MIN_INTERVAL="0")
+        self.assertFalse((self.state / "update-skipped-commit").exists())
+
+
+class TestTheShippedTargetsFile(unittest.TestCase):
+    def test_it_ships_set_to_the_whole_fleet(self):
+        """A rollout left half-finished is the expensive mistake here."""
+        body = (REPO_ROOT / "deploy-targets").read_text()
+        live = [l.split("#")[0].strip() for l in body.splitlines()]
+        self.assertEqual([l for l in live if l], ["*"],
+                         "deploy-targets is still narrowed to a subset")
 
 
 class TestForceAndRateLimit(SelfUpdateHarness):

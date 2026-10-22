@@ -37,6 +37,11 @@ OWNER="$(stat -c %U "$REPO_DIR")"
 STATE_DIR="${OBD_EV_STATE_DIR:-/var/lib/obd-ev}"
 STAMP="$STATE_DIR/last-update-check"
 DEFERRED="$STATE_DIR/update-deferred-since"
+SKIPPED="$STATE_DIR/update-skipped-commit"
+# Which kit this is, by the same rule config.py uses, so the id in
+# deploy-targets is the id in the CSVs and the upload folder.
+DEVICE_ID="${OBD_EV_DEVICE_ID:-$(hostname)}"
+TARGETS_FILE="deploy-targets"
 LOG_DIR="${OBD_EV_LOG_DIR:-$REPO_DIR/logs}"
 MIN_INTERVAL="${OBD_EV_UPDATE_MIN_INTERVAL:-240}"
 MAX_DEFER="${OBD_EV_UPDATE_MAX_DEFER:-21600}"
@@ -45,6 +50,45 @@ FORCE=0
 
 log() { echo "self_update: $*"; }
 git_as() { sudo -u "$OWNER" git -C "$REPO_DIR" "$@"; }
+
+# -- is this commit meant for this kit? -------------------------------------
+# `deploy-targets` on the release branch lists the device ids a commit is
+# for, one shell glob per line, `#` comments and blank lines ignored. `*`
+# -- the normal state -- means the whole fleet.
+#
+#     # deploy-targets: prove the new signal set on the bench first
+#     P002
+#
+# Read from the *incoming* commit, never from the working tree: the kit's
+# own copy is one commit behind by definition, so a kit could never be added
+# to the list it is being judged against.
+#
+# Fails open, deliberately. A missing, unreadable or empty file means every
+# kit, because the failure mode of the opposite choice is a fleet that
+# quietly stops updating -- including the push that would fix it. The
+# narrowing is a convenience for staged rollout, not a security boundary;
+# anyone who can push to the branch can rewrite this file in the same push.
+targets_this_kit() {
+    local commit="$1" list
+    list="$(git_as show "$commit:$TARGETS_FILE" 2>/dev/null)" || return 0
+    [ -z "${list//[[:space:]]/}" ] && return 0
+    local pattern found=0
+    while IFS= read -r pattern; do
+        pattern="${pattern%%#*}"
+        pattern="$(printf '%s' "$pattern" | tr -d '[:space:]')"
+        [ -z "$pattern" ] && continue
+        found=1
+        # shellcheck disable=SC2254 -- the glob is the point
+        case "$DEVICE_ID" in $pattern) return 0 ;; esac
+    done <<EOF
+$list
+EOF
+    # A file of nothing but comments is far likelier to be a `*` someone
+    # commented out than a deliberate "no kit at all", and the second
+    # reading strands the fleet. Fail open.
+    [ "$found" = 0 ] && return 0
+    return 1
+}
 
 # -- is a drive in progress? ------------------------------------------------
 # obd_connected is the 4th column of every row, and .current names the part
@@ -134,6 +178,20 @@ touch "$STAMP"
 remote="$(git_as rev-parse "origin/$branch" 2>/dev/null)"
 [ -z "$remote" ] && { log "no such branch origin/$branch"; exit 0; }
 [ "$before" = "$remote" ] && [ "$current" = "$branch" ] && { rm -f "$DEFERRED"; exit 0; }
+
+# -- is this commit meant for this kit? -------------------------------------
+# Staged rollout: a commit can name the kits it is for, so a change can be
+# proven on the bench kit before it reaches a car. See targets_this_kit().
+if [ "$FORCE" != 1 ] && ! targets_this_kit "$remote" "$branch"; then
+    # Once per commit, not once per check: at a five-minute cadence this
+    # would otherwise be 288 identical lines a day.
+    if [ "$(cat "$SKIPPED" 2>/dev/null)" != "$remote" ]; then
+        echo "$remote" > "$SKIPPED"
+        log "${remote:0:8} is not for $DEVICE_ID (see $TARGETS_FILE on origin/$branch) -- staying on ${before:0:8}"
+    fi
+    exit 0
+fi
+rm -f "$SKIPPED"
 
 # Refuse before touching anything: a kit with local edits is one someone was
 # debugging, and silently discarding that would be worse than not updating.

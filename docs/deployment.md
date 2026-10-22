@@ -346,6 +346,45 @@ every update forever, including the one that fixes it.
 > cannot reach the fleet. To take a kit out of the loop, set
 > `OBD_EV_AUTO_UPDATE=0` in its `/etc/default/obd-ev`.
 
+### Rolling out to one kit first
+
+A commit can name the kits it is for, in `deploy-targets` at the repo root:
+one device id per line, shell globs allowed, `#` comments ignored.
+
+```
+# deploy-targets -- prove the new signal set on the bench first
+P002
+```
+
+Push that together with the change: `self_update.sh` reads the file **from
+the commit being offered**, not from the kit's own checkout, so the push
+itself decides who takes it. P002 updates on its next five-minute check;
+every other kit logs one line and stays where it is:
+
+```
+self_update: 0c25160f is not for P001 (see deploy-targets on origin/deploy)
+             -- staying on 3199b07d
+```
+
+Once it looks right on the bench, put the file back to `*` and push again.
+Kits that sat out jump straight to the newest commit on their next check —
+they are not replaying the ones they skipped.
+
+Two things to know before using it:
+
+* **It is a convenience, not a boundary.** Anyone who can push to the branch
+  can rewrite the file in the same push. Opting a kit out for real is
+  `OBD_EV_AUTO_UPDATE=0` on that kit.
+* **It fails open.** A missing, empty, or all-commented file means the whole
+  fleet, because the opposite reading would let one typo quietly stop every
+  kit from updating — including the push that would fix it. For the same
+  reason, `--force` on a kit ignores targeting entirely.
+
+A rollout left half-finished is the expensive mistake here: the kit still
+takes `deploy`, so it looks healthy, and nothing but that journal line says
+it is a week behind. The test suite fails if `deploy-targets` is committed
+narrowed to a subset.
+
 ### Release workflow
 
 `main` is where you work; `deploy` is what the kits run. Nothing reaches a kit
