@@ -39,10 +39,21 @@ ProtectSystem=strict
 PrivateTmp=yes
 NoNewPrivileges=yes
 
+# --backend pygame, not the default `auto`. Auto falls back to the text
+# renderer when SDL will not start, which is right over SSH and wrong here:
+# the service would sit there drawing ANSI frames into the journal while the
+# screen showed the console, looking perfectly healthy. Named backend means
+# a display that will not come up is a failed unit you can see in
+# `systemctl status`.
 ExecStart=@VENV_DIR@/bin/python @REPO_DIR@/scripts/dashboard.py \
-    --config @REPO_DIR@/config.yaml
+    --config @REPO_DIR@/config.yaml --backend pygame
 Restart=on-failure
 RestartSec=10
+# `systemctl stop` took the full 90s default and ended in SIGKILL on the
+# bench kit. SIGINT is the signal this script already shuts down cleanly on,
+# and ten seconds is long enough for a redraw loop to notice.
+KillSignal=SIGINT
+TimeoutStopSec=10
 
 [Install]
 WantedBy=multi-user.target

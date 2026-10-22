@@ -730,8 +730,15 @@ def main() -> int:
     log_dir = Path(cfg.logger.output_dir)
     mon = Monitor(log_dir, cfg.device.id or "obd-ev")
 
-    screen = TextScreen(plain=True) if args.once else \
-        open_screen(args.backend, args.windowed)
+    # `--once` exists for a quick look over SSH, so on its own it stays with
+    # the text renderer rather than flashing a frame at an empty seat. Asking
+    # for a backend by name overrides that: `--backend pygame --once` is how
+    # you prove the screen works without leaving a process running, and it
+    # has to actually reach the screen or raise saying why.
+    if args.once and args.backend in ("auto", "text"):
+        screen = TextScreen(plain=True)
+    else:
+        screen = open_screen(args.backend, args.windowed)
     view_at = VIEWS.index(args.view)
     page = 0
 
