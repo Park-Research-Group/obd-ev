@@ -138,6 +138,17 @@ A spinning cube means the display stack is fine and the problem is in SDL,
 pygame or the unit. No cube means it is below us, and nothing in this repo
 will fix it.
 
+* **A black screen, no error, and SDL reported a sensible size** — the panel
+  is on the Pi's *second* HDMI socket. SDL's KMSDRM backend drives the first
+  connector it finds, not the first connected one, so it mode-sets the right
+  resolution onto the dead port. Nothing in SDL chooses the connector: move
+  the cable to the socket nearest the USB-C power connector. `install_
+  dashboard.sh` warns about this before you ever see the black screen.
+
+  ```bash
+  for s in /sys/class/drm/card*-*/status; do echo "$s -> $(cat "$s")"; done
+  ```
+
 * **`pygame.error: EGL not initialized`** — Pi OS Lite ships the kernel side
   of KMS and none of the Mesa userspace behind it, so `/dev/dri` looks
   healthy while EGL has nothing to initialize. `sudo apt-get install -y
