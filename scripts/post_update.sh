@@ -44,16 +44,28 @@ sed -i \
     -e "s|@INSTALL_USER@|$OWNER|g" \
     "$tmp_units"/*.service
 changed=0
+changed_timers=""
 for f in "$tmp_units"/*.service "$tmp_units"/*.timer; do
     [ -e "$f" ] || continue
-    target="/etc/systemd/system/$(basename "$f")"
+    unit="$(basename "$f")"
+    target="/etc/systemd/system/$unit"
     if ! cmp -s "$f" "$target"; then
         cp "$f" "$target" && changed=1
-        echo "post_update: updated $(basename "$f")"
+        case "$unit" in *.timer) changed_timers="$changed_timers $unit" ;; esac
+        echo "post_update: updated $unit"
     fi
 done
 rm -rf "$tmp_units"
 [ "$changed" = 1 ] && systemctl daemon-reload
+
+# A running timer keeps the schedule it was started with, so a changed
+# interval would not take effect until the kit next rebooted -- which for a
+# kit that only shortened its own update interval could be a long time.
+# try-restart, so a timer that is deliberately not running stays that way.
+for unit in $changed_timers; do
+    systemctl try-restart "$unit" >/dev/null 2>&1 \
+        && echo "post_update: re-armed $unit"
+done
 
 # The touchscreen dashboard, refreshed only where it is already installed.
 # Its template lives in systemd/optional/ so it never reaches a participant

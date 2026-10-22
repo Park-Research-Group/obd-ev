@@ -375,11 +375,18 @@ class TestTheRetryExists(unittest.TestCase):
         body = (REPO_ROOT / "scripts" / "setup_pi.sh").read_text()
         self.assertIn("systemctl enable obd-ev-update.timer", body)
 
+    def test_post_update_re_arms_a_timer_whose_interval_changed(self):
+        """A running timer keeps the schedule it started with, so shortening
+        the interval would otherwise take effect at the next reboot."""
+        body = (REPO_ROOT / "scripts" / "post_update.sh").read_text()
+        self.assertIn("changed_timers", body)
+        self.assertIn("try-restart", body)
+
     def test_post_update_enables_it(self):
         """Copying a unit file is not enough: a timer nothing enables ships
         to every kit and never fires."""
         body = (REPO_ROOT / "scripts" / "post_update.sh").read_text()
-        enable_block = body[body.index("for unit in"):]
+        enable_block = body[body.index("for unit in obd-ev.service"):]
         self.assertIn("obd-ev-update.timer",
                       enable_block[:enable_block.index("done")])
 
