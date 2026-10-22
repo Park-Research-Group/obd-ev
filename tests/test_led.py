@@ -25,6 +25,25 @@ def fake_led(max_brightness=1):
     return d
 
 
+def brightness(d, timeout=1.0):
+    """The current level, retrying past an empty read.
+
+    The indicator rewrites the file on every half-cycle, and `write_text`
+    truncates before it writes -- so a reader can catch it empty. On a kit
+    that window does not exist: the real file is sysfs, where one write is
+    one syscall the kernel applies whole. It is an artefact of standing the
+    LED directory in on an ordinary filesystem, and it shows up on a slow
+    one, so read past it rather than letting it fail a run at random.
+    """
+    path = Path(d) / "brightness"
+    deadline = time.time() + timeout
+    while True:
+        value = path.read_text().strip()
+        if value or time.time() >= deadline:
+            return value
+        time.sleep(0.01)
+
+
 def samples(led, seconds, interval=0.02):
     """Watch the brightness file and return the distinct values seen."""
     path = led.path
@@ -50,10 +69,10 @@ class TestPatterns(unittest.TestCase):
         self.assertTrue(led.available)
         led.set_state(CONNECTED)
         time.sleep(0.4)
-        self.assertEqual(d.joinpath("brightness").read_text().strip(), "1")
+        self.assertEqual(brightness(d), "1")
         # and stays on
         time.sleep(0.4)
-        self.assertEqual(d.joinpath("brightness").read_text().strip(), "1")
+        self.assertEqual(brightness(d), "1")
 
     def test_off_is_steady_off(self):
         d = fake_led()
@@ -62,7 +81,7 @@ class TestPatterns(unittest.TestCase):
         self.addCleanup(led.stop)
         led.set_state(OFF)
         time.sleep(0.5)
-        self.assertEqual(d.joinpath("brightness").read_text().strip(), "0")
+        self.assertEqual(brightness(d), "0")
 
     def test_searching_and_idle_both_blink_at_different_rates(self):
         """The two blink states have to be tellable apart by eye, so the fast
@@ -87,7 +106,7 @@ class TestPatterns(unittest.TestCase):
         self.addCleanup(led.stop)
         led.set_state(CONNECTED)
         time.sleep(0.4)
-        self.assertEqual(d.joinpath("brightness").read_text().strip(), "0")
+        self.assertEqual(brightness(d), "0")
 
     def test_max_brightness_is_honoured(self):
         d = fake_led()
@@ -96,7 +115,7 @@ class TestPatterns(unittest.TestCase):
         self.addCleanup(led.stop)
         led.set_state(CONNECTED)
         time.sleep(0.4)
-        self.assertEqual(d.joinpath("brightness").read_text().strip(), "255")
+        self.assertEqual(brightness(d), "255")
 
 
 class TestDegradesQuietly(unittest.TestCase):
@@ -124,7 +143,7 @@ class TestDegradesQuietly(unittest.TestCase):
         led.start()
         self.assertFalse(led.available)
         led.stop()
-        self.assertEqual(d.joinpath("brightness").read_text().strip(), "0")
+        self.assertEqual(brightness(d), "0")
 
 
 if __name__ == "__main__":

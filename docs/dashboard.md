@@ -124,15 +124,35 @@ trip lookup and unit labels, so they cannot disagree.
 The logger is unaffected either way — debug it at leisure.
 
 ```bash
-journalctl -u obd-ev-dashboard -n 30
+sudo journalctl -u obd-ev-dashboard -n 30     # sudo: the kit user is not in adm
 ```
 
+**First, decide whether the fault is ours at all.** This drives
+DRM → GBM → EGL → GLES with no SDL in the picture:
+
+```bash
+sudo apt-get install -y kmscube && sudo kmscube
+```
+
+A spinning cube means the display stack is fine and the problem is in SDL,
+pygame or the unit. No cube means it is below us, and nothing in this repo
+will fix it.
+
+* **`pygame.error: EGL not initialized`** — Pi OS Lite ships the kernel side
+  of KMS and none of the Mesa userspace behind it, so `/dev/dri` looks
+  healthy while EGL has nothing to initialize. `sudo apt-get install -y
+  libgl1-mesa-dri libegl1 libgles2 libgbm1`. The installer does this now;
+  kits built before it did, do not have it.
 * `No module named 'pygame'` — the venv is built with `--system-site-packages`,
   so `sudo apt install python3-pygame` is usually the fix; the installer then
   falls back to pip.
-* No display, no error — SDL found no KMS device. Check the panel is on
-  (`ls /dev/dri/`) and that the user is in `video` and `render`; a group change
-  needs the service restarted, not just re-login.
+* **`undefined symbol: _udev_device_get_action`** in `libSDL2` — the distro
+  SDL2 is mismatched against the system libudev. Go round it with the pip
+  wheel, which bundles its own SDL2:
+  `./.venv/bin/python -m pip install --force-reinstall pygame`.
+* No display, no error — the service is running the text renderer into the
+  journal. It passes `--backend pygame` precisely so that cannot happen
+  silently; if you see it, something is launching it with `--backend auto`.
 * Starts, then exits — if `ProtectSystem=strict` is the cause it shows as a
   read-only filesystem error. Comment it out of the unit and report what wrote.
 * Console text showing through — `sudo systemctl disable --now getty@tty1`.
