@@ -135,6 +135,41 @@ class TestDecodedValuesUseColumns(unittest.TestCase):
 
 
 
+class TestKitEnvIsReadByEveryTool(unittest.TestCase):
+    """systemd hands /etc/default/obd-ev to the services; anything started
+    another way -- the dashboard from a desktop session -- used to see none
+    of it and fall back to a relative ./logs."""
+
+    def test_config_load_picks_up_the_env_file(self):
+        import os
+        import tempfile
+        from obd_ev import config as cfgmod
+
+        env_file = Path(tempfile.mkdtemp()) / "obd-ev"
+        env_file.write_text("OBD_EV_LOG_DIR=/var/lib/elsewhere/logs\n")
+        saved = os.environ.pop("OBD_EV_LOG_DIR", None)
+        original = cfgmod.ENV_FILE
+        cfgmod.ENV_FILE = env_file
+        try:
+            cfg = cfgmod.load("/nonexistent.yaml")
+            self.assertEqual(cfg.logger.output_dir, "/var/lib/elsewhere/logs")
+        finally:
+            cfgmod.ENV_FILE = original
+            os.environ.pop("OBD_EV_LOG_DIR", None)
+            if saved is not None:
+                os.environ["OBD_EV_LOG_DIR"] = saved
+
+
+class TestRequirementsDoNotShadowSystemGps(unittest.TestCase):
+    def test_gps_is_not_a_pip_requirement(self):
+        """The PyPI package named gps is not the gpsd client; installing it
+        shadows python3-gps and breaks every read on Python 3.9+."""
+        body = (Path(__file__).resolve().parents[1] / "requirements.txt").read_text()
+        for line in body.splitlines():
+            line = line.split("#")[0].strip()
+            self.assertFalse(line.startswith("gps"), f"would install {line!r}")
+
+
 class TestPreflightFailuresMode(unittest.TestCase):
     """--failures feeds self_update's before/after comparison, so it has to
     be names and nothing else -- a banner carrying the repo path would be

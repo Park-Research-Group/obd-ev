@@ -64,28 +64,10 @@ ENV_FILE = Path("/etc/default/obd-ev")
 
 
 def load_kit_env():
-    """Pull in /etc/default/obd-ev, which is where a kit's identity lives.
-
-    systemd hands it to the service as EnvironmentFile; a shell running this
-    script by hand gets nothing, so preflight used to report a device id
-    "falling back to hostname" that was in fact set, and tell you to set it
-    again. Values already in the environment win, so an operator can still
-    override one for a single run.
-    """
-    if not ENV_FILE.exists():
-        return
-    try:
-        text = ENV_FILE.read_text()
-    except OSError:
-        return                      # root-owned on some kits; not fatal
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        key, value = key.strip(), value.strip().strip('"').strip("'")
-        if key.startswith("OBD_EV_") and key not in os.environ:
-            os.environ[key] = value
+    """Thin wrapper over obd_ev.config.load_kit_env, kept so this module's
+    ENV_FILE stays the thing to patch in tests."""
+    from obd_ev.config import load_kit_env as _load
+    _load(ENV_FILE)
 
 
 def check_config():

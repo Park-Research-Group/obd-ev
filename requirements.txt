@@ -1,4 +1,8 @@
 bleak>=0.22
-gps>=3.19
+# NOT gps: the client library comes from apt as python3-gps, installed by
+# setup_pi.sh and visible through the venv's --system-site-packages. The
+# PyPI package of the same name is a different, unmaintained thing that
+# still passes encoding= to JSONDecoder -- removed in Python 3.9 -- so on a
+# modern Pi it shadows the working one and every gpsd read fails.
 mpu6050-raspberrypi>=1.2
 PyYAML>=6.0

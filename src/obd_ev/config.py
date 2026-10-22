@@ -199,6 +199,37 @@ def _sanitize(cfg: "Config") -> None:
         cfg.device.id = str(cfg.device.id)
 
 
+ENV_FILE = Path("/etc/default/obd-ev")
+
+
+def load_kit_env(path: Optional[Path] = None) -> None:
+    """Read /etc/default/obd-ev into the environment, as systemd does.
+
+    systemd hands that file to the services as EnvironmentFile, so anything
+    started any other way -- the dashboard from a desktop session, a script
+    in a terminal -- saw none of it. The dashboard then fell back to the
+    default relative `./logs`, resolved against whatever directory the
+    session happened to start in, and reported "waiting for logger" while
+    the logger was writing normally a few directories away.
+
+    Values already in the environment win, so a one-off override still
+    works.
+    """
+    path = Path(path) if path is not None else ENV_FILE
+    try:
+        text = path.read_text()
+    except OSError:
+        return                      # absent, or root-only on some kits
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key, value = key.strip(), value.strip().strip('"').strip("'")
+        if key.startswith("OBD_EV_") and key not in os.environ:
+            os.environ[key] = value
+
+
 def collection_profile_path(signalset: str | Path) -> Path:
     """`vehicles/Chevrolet-Bolt-EUV.json` -> `…-EUV.collect.json`."""
     return Path(signalset).with_suffix(".collect.json")
@@ -253,6 +284,7 @@ def _apply_collection_profile(cfg: "Config", vehicle_raw: dict) -> None:
 
 
 def load(path: str | Path = "config.yaml") -> Config:
+    load_kit_env()
     p = Path(path)
     raw = {}
     if p.exists():
