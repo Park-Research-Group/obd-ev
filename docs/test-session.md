@@ -9,20 +9,41 @@ participant kit.
 
 ## Before you leave
 
+**Reboot the kit once, while you are still next to it.** An EEPROM change is
+staged (SD card first in the boot order) and applies on the next boot, and
+the same boot is what creates `/dev/ttyS0` for the GPS.
+
 ```bash
 ssh linklab@P002.local
-cd ~/obd-ev && git log --oneline -1          # matches origin/deploy
-./scripts/preflight.py                       # full, includes a test upload
-df -h /                                      # free space for the session
+sudo reboot
+# then, once it is back:
+vcgencmd bootloader_config | grep BOOT_ORDER   # expect 0xf41
+ls -l /dev/ttyS0                               # the GPS UART node
+cd ~/obd-ev
+git log --oneline -1                           # matches origin/deploy
+git fsck --no-progress                         # silence = healthy repo
+df -h /                                        # want >1 GB free
+./scripts/preflight.py                         # full, includes a test upload
 systemctl is-active obd-ev
 ```
+
+`git fsck` is in the list because a full card once truncated objects in
+`.git`, which left the kit unable to update while everything else looked
+normal. If it reports empty objects: `find .git/objects -type f -size 0
+-delete && git fetch origin && git reset --hard origin/deploy`.
 
 Take: the OBD-II adapter, the car USB-C supply, the panel's own power
 supply if the screen is coming, and the HDMI + USB-touch leads.
 
-Expect preflight to fail on GPS and IMU until they are wired. That is fine
-and no longer blocks updates, but it does mean `setup_kit.sh` would call the
-kit "not ready" — ignore that wording for a test session.
+Expect preflight to fail on the IMU until it is wired, and on the GPS until
+it is both wired and has sky. Neither blocks an update any more — the kit
+compares failures before and after and keeps an update that changed
+nothing — but `setup_kit.sh` would still call the kit "not ready". Ignore
+that wording for a test session.
+
+Already set on this kit, so nothing to do: the setup network is open
+(`OBD_EV_AP_PASSWORD` empty), `obd-ev-provision` is disabled, and the card
+has ~2 GB free after clearing the desktop applications off it.
 
 ## 1. Their WiFi
 
@@ -153,7 +174,8 @@ sudo nmcli connection delete "home"
 | No GPS fix | `cgps -s` — satellites but no fix means wiring is right, sky is not |
 | Nothing uploading | `nmcli -t -f NAME,DEVICE connection show --active`, then `journalctl -u obd-ev-upload -n 20` |
 | Screen blank | the panel's own power, and HDMI in the socket nearest USB-C |
-| Card filling up | `df -h /` — collection stops when it is full |
+| Card filling up | `df -h /` — collection stops when it is full, and a full card has already corrupted `.git` once |
+| Kit not taking updates | `git -C ~/obd-ev log --oneline -1` against `origin/deploy`, then `journalctl -u obd-ev-update -n 20` |
 
 The kit updates itself from the `deploy` branch every five minutes whenever
 it has internet, so a fix pushed from the lab reaches the car without
