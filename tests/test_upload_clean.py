@@ -322,5 +322,36 @@ class TestTripsWithoutOBD(UploadTestCase):
         self.assertIn("no OBD readings", report)
 
 
+
+class TestTheOpenPartIsProtectedWithoutSystemd(unittest.TestCase):
+    """On a bench kit the logger is started by hand, so `systemctl is-active`
+    says nothing. A part still being written must still be left alone."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+        self.logs = self.tmp / "logs"
+        (self.logs / "20260101_000000_abcd1234").mkdir(parents=True)
+        self.part = self.logs / "20260101_000000_abcd1234" / "drive_P002_x.csv"
+        self.part.write_text("timestamp,t_mono,device_id,obd_connected\n"
+                             "2026-01-01T00:00:00Z,1.0,P002,0\n")
+        (self.logs / ".current").write_text(str(self.part))
+
+    def body(self):
+        return (REPO_ROOT / "scripts" / "upload.sh").read_text()
+
+    def test_a_freshly_written_part_counts_as_a_running_logger(self):
+        self.assertIn("newermt", self.body(),
+                      "nothing but systemd decides whether a part is open")
+
+    def test_the_marker_alone_is_not_enough(self):
+        """After a power cut the marker outlives the logger and its file is
+        complete -- that one must still upload."""
+        src = self.body()
+        window = src[src.index("logger_running=0"):src.index("request_flush()")]
+        self.assertIn("-newermt", window)
+        self.assertIn("-f \"$current_part\"", window)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -51,6 +51,19 @@ fi
 # uploaded.
 logger_running=0
 systemctl is-active --quiet obd-ev 2>/dev/null && logger_running=1
+# systemd is not the only way the logger runs: on a bench kit it gets started
+# by hand, and everything that protects the open part -- the flush request and
+# the skip below -- hangs off this one answer. A file still being appended to
+# is evidence systemd does not have. After a power cut the marker outlives the
+# logger, but its file stops changing, so this stays false and the completed
+# part uploads as usual.
+if [ "$logger_running" = 0 ] && [ -f "$LOG_DIR/.current" ]; then
+    current_part="$(cat "$LOG_DIR/.current" 2>/dev/null || true)"
+    if [ -n "$current_part" ] && [ -f "$current_part" ] \
+            && [ -n "$(find "$current_part" -newermt '-60 seconds' 2>/dev/null)" ]; then
+        logger_running=1
+    fi
+fi
 
 # Ask the logger to close the part it has open, so this run can ship it instead
 # of leaving it for a run that may never come.
