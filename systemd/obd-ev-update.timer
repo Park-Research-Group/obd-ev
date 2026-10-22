@@ -8,8 +8,20 @@ Description=Periodically check for obd-ev updates
 # powered from the OBD port is the next drive, with the vehicle connected
 # again. This is what makes "defer until the trip ends" a deferral rather
 # than a refusal.
-OnBootSec=5min
-OnUnitActiveSec=1h
+#
+# Every five minutes, fleet-wide. A check that finds nothing is one git fetch
+# of a few kilobytes, so the cost is in propagation speed, not bandwidth: a
+# push to `deploy` is in a participant's car within minutes. Promote to that
+# branch deliberately -- see scripts/self_update.sh.
+#
+# self_update.sh rate-limits itself to OBD_EV_UPDATE_MIN_INTERVAL, which must
+# stay below this interval or the timer is gated out and the cadence is a
+# fiction. tests/test_self_update.py pins the two together.
+OnBootSec=1min
+OnUnitActiveSec=5min
+# Keep the cadence honest rather than letting systemd batch these up to a
+# minute late; the kits are mains-powered while they run.
+AccuracySec=30s
 # A kit is off far more than it is on; catch up rather than skip.
 Persistent=true
 Unit=obd-ev-update.service

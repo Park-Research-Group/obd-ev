@@ -95,6 +95,22 @@ def write_exec(path: Path, body: str) -> None:
     path.chmod(path.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
 
+def _setting(unit_body, key):
+    for line in unit_body.splitlines():
+        line = line.strip()
+        if line.startswith(f"{key}=") and line != f"{key}=":
+            return line.split("=", 1)[1]
+    raise AssertionError(f"{key} not set in the unit")
+
+
+def _seconds(value):
+    """systemd time spans, enough of them for the units we use."""
+    for suffix, scale in (("min", 60), ("h", 3600), ("s", 1)):
+        if value.endswith(suffix):
+            return int(value[:-len(suffix)]) * scale
+    return int(value)
+
+
 class SelfUpdateHarness(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
@@ -336,6 +352,22 @@ class TestTheRetryExists(unittest.TestCase):
         body = timer.read_text()
         self.assertIn("Unit=obd-ev-update.service", body)
         self.assertIn("OnUnitActiveSec=", body)
+
+    def test_it_fires_every_five_minutes(self):
+        body = (REPO_ROOT / "systemd" / "obd-ev-update.timer").read_text()
+        self.assertIn("OnUnitActiveSec=5min", body)
+
+    def test_the_script_does_not_rate_limit_the_timer_away(self):
+        """The timer's cadence is a fiction if self_update's own rate limit
+        is longer than it: every other firing would exit before fetching."""
+        timer = (REPO_ROOT / "systemd" / "obd-ev-update.timer").read_text()
+        period = _seconds(_setting(timer, "OnUnitActiveSec"))
+        script = (REPO_ROOT / "scripts" / "self_update.sh").read_text()
+        default = int(script.split("OBD_EV_UPDATE_MIN_INTERVAL:-")[1]
+                      .split("}")[0])
+        self.assertLess(default, period,
+                        f"MIN_INTERVAL default {default}s gates out a "
+                        f"{period}s timer")
 
     def test_a_fresh_card_enables_it_too(self):
         """post_update only runs on an update; a card built today has to

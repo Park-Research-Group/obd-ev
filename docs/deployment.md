@@ -298,8 +298,10 @@ absent, so a kit that predates the settings behaves the same way:
 ```sh
 OBD_EV_AUTO_UPDATE=1               # 0 opts this kit out
 OBD_EV_UPDATE_BRANCH=deploy        # default: deploy
-OBD_EV_UPDATE_MIN_INTERVAL=3600    # seconds between checks (counted from the
-                                   # last check that actually reached GitHub)
+OBD_EV_UPDATE_MIN_INTERVAL=240     # seconds between checks (counted from the
+                                   # last check that actually reached GitHub).
+                                   # Keep it under the timer's 5min interval
+                                   # or the timer is gated out.
 OBD_EV_UPDATE_MAX_DEFER=21600      # 6h: longest an update waits for a drive
                                    # to end before taking it mid-drive
 ```
@@ -308,11 +310,20 @@ A kit built before the update hooks existed needs them installed once by hand
 (`sudo ./scripts/post_update.sh`); after that, updates install their own.
 
 **What triggers a check.** Two things: a NetworkManager dispatcher hook on
-connect, and `obd-ev-update.timer` hourly. The timer is not belt-and-braces —
-it is what makes the check happen at all on a kit powered from the OBD port.
-Such a kit is online only while the car is on, which is exactly when the
-vehicle is connected and an update defers; with the hook alone it would wait
-for a connect that only ever happens mid-drive, and never update.
+connect, and `obd-ev-update.timer` **every five minutes**. The timer is not
+belt-and-braces — it is what makes the check happen at all on a kit powered
+from the OBD port. Such a kit is online only while the car is on, which is
+exactly when the vehicle is connected and an update defers; with the hook
+alone it would wait for a connect that only ever happens mid-drive, and never
+update.
+
+Five minutes is deliberate, and it is the whole fleet, not just the bench
+kit: a check that finds nothing is one `git fetch` of a few kilobytes, so what
+it buys is propagation speed. The cost is on the other side — **a push to
+`deploy` is running in a participant's car within minutes**, with no window to
+notice a mistake and force-push over it. Promote to `deploy` deliberately, and
+if a kit must be held back, set `OBD_EV_AUTO_UPDATE=0` on it *before* pushing,
+not after.
 
 **Deferring a drive, but not forever.** An update that arrives mid-drive waits,
 because restarting the logger splits the trip. After `OBD_EV_UPDATE_MAX_DEFER`
@@ -361,7 +372,8 @@ A NetworkManager hook fires `obd-ev-update.service` on connect. `self_update.sh`
 then:
 
 1. exits immediately if the kit is opted out (`OBD_EV_AUTO_UPDATE=0`)
-2. rate-limits to `OBD_EV_UPDATE_MIN_INTERVAL` (wifi flaps a lot)
+2. rate-limits to `OBD_EV_UPDATE_MIN_INTERVAL` (4 min; wifi flaps a lot, and
+   the dispatcher hook fires on every connect)
 3. **defers while a trip is running** — `obd_connected=1` in the live CSV means
    restarting the logger would lose the drive
 4. refuses if the working tree is dirty, or if the update is not a fast-forward

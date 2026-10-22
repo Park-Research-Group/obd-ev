@@ -13,15 +13,17 @@
 #
 #   OBD_EV_AUTO_UPDATE=0                 # opt this kit out
 #   OBD_EV_UPDATE_BRANCH=deploy          # default: deploy
-#   OBD_EV_UPDATE_MIN_INTERVAL=3600      # seconds between attempts
+#   OBD_EV_UPDATE_MIN_INTERVAL=240       # seconds between attempts; must
+#                                        # stay under the timer's interval
+#                                        # or the timer is gated out
 #   OBD_EV_UPDATE_MAX_DEFER=21600        # 6h: longest an update waits for a
 #                                        # drive to end before taking the
 #                                        # drive's part and updating anyway
 #
 #   scripts/self_update.sh --force       # ignore the interval and the trip check
 #
-# obd-ev-update.timer retries hourly. Without it the only trigger is the
-# dispatcher hook on connect, and a kit powered from the OBD port is online
+# obd-ev-update.timer retries every five minutes. Without it the only
+# trigger is the dispatcher hook on connect, and an OBD-powered kit is online
 # only while the car is on -- which is exactly when an update defers. It
 # would then wait for a connect that only ever happens mid-drive, and never
 # update at all.
@@ -36,7 +38,7 @@ STATE_DIR="${OBD_EV_STATE_DIR:-/var/lib/obd-ev}"
 STAMP="$STATE_DIR/last-update-check"
 DEFERRED="$STATE_DIR/update-deferred-since"
 LOG_DIR="${OBD_EV_LOG_DIR:-$REPO_DIR/logs}"
-MIN_INTERVAL="${OBD_EV_UPDATE_MIN_INTERVAL:-3600}"
+MIN_INTERVAL="${OBD_EV_UPDATE_MIN_INTERVAL:-240}"
 MAX_DEFER="${OBD_EV_UPDATE_MAX_DEFER:-21600}"
 FORCE=0
 [ "${1:-}" = "--force" ] && FORCE=1
