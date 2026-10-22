@@ -142,14 +142,19 @@ sudo systemctl enable obd-ev.service
 # obd-ev-provision is deliberately NOT enabled here. It puts wlan0 into AP
 # mode, which would disconnect whoever is building the card. setup_kit.sh
 # arms it once the rest of the kit is verified.
-sudo systemctl enable obd-ev-upload.timer
+# --now on every timer: `enable` alone arms them for the next boot and
+# leaves them dead until then. A card built and handed over without a reboot
+# in between does not upload, does not correct its clock and does not check
+# for updates, while `is-enabled` cheerfully says `enabled` -- which is how
+# P002 spent its first hour.
+sudo systemctl enable --now obd-ev-upload.timer
 # No RTC on a Pi: without this a kit with no reachable NTP drifts, and the
 # wall-clock timestamps in the data go with it.
-sudo systemctl enable obd-ev-timesync.timer
-# The hourly retry behind the update hook. The hook alone only fires on
+sudo systemctl enable --now obd-ev-timesync.timer
+# The five-minute retry behind the update hook. The hook alone only fires on
 # connect, which on a kit powered from the OBD port means mid-drive, which is
 # when an update defers -- see scripts/self_update.sh.
-sudo systemctl enable obd-ev-update.timer
+sudo systemctl enable --now obd-ev-update.timer
 
 echo "[8/8] default env file"
 # Default env file (overridable per-device).

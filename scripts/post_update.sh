@@ -100,7 +100,15 @@ for unit in obd-ev.service obd-ev-upload.timer obd-ev-timesync.timer \
     case "$state" in
         enabled|enabled-runtime|static|indirect) ;;
         *) systemctl enable "$unit" >/dev/null 2>&1 \
-               && echo "post_update: enabled $unit" ;;
+               && echo "post_update: enabled $unit"
+           # Enabling arms a unit for the next boot and nothing more. On a
+           # kit that reboots only when an ignition cycle says so, that can
+           # be days of a timer that `is-enabled` calls enabled and which
+           # has never once fired.
+           case "$unit" in
+               *.timer) systemctl start "$unit" >/dev/null 2>&1 \
+                            && echo "post_update: started $unit" ;;
+           esac ;;
     esac
 done
 systemctl start obd-ev-timesync.timer >/dev/null 2>&1 || true

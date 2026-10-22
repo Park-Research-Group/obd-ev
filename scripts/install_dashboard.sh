@@ -97,7 +97,9 @@ sed -e "s|@REPO_DIR@|$REPO_DIR|g" \
     -e "s|@VENV_DIR@|$VENV_DIR|g" \
     -e "s|@INSTALL_USER@|$INSTALL_USER|g" \
     "$TEMPLATE" > "$tmp"
-sudo cp "$tmp" "/etc/systemd/system/$UNIT"
+# install, not cp: cp gives the new file mktemp's 0600, which leaves a
+# root-only unit nobody can read back while debugging.
+sudo install -m 644 "$tmp" "/etc/systemd/system/$UNIT"
 rm -f "$tmp"
 sudo systemctl daemon-reload
 sudo systemctl enable --now "$UNIT"

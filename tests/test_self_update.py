@@ -469,11 +469,20 @@ class TestTheRetryExists(unittest.TestCase):
                         f"MIN_INTERVAL default {default}s gates out a "
                         f"{period}s timer")
 
-    def test_a_fresh_card_enables_it_too(self):
-        """post_update only runs on an update; a card built today has to
-        come up with the retry already armed."""
+    def test_a_fresh_card_starts_it_too(self):
+        """post_update only runs on an update, so a card built today has to
+        come up with the retry armed *and ticking*: `enable` alone waits for
+        a reboot, and a kit reboots when an ignition cycle says so."""
         body = (REPO_ROOT / "scripts" / "setup_pi.sh").read_text()
-        self.assertIn("systemctl enable obd-ev-update.timer", body)
+        self.assertIn("systemctl enable --now obd-ev-update.timer", body)
+
+    def test_every_timer_a_fresh_card_enables_is_also_started(self):
+        body = (REPO_ROOT / "scripts" / "setup_pi.sh").read_text()
+        armed = [l.strip() for l in body.splitlines()
+                 if "systemctl enable" in l and ".timer" in l]
+        self.assertTrue(armed, "no timers enabled in setup_pi.sh")
+        for line in armed:
+            self.assertIn("--now", line, f"enabled but never started: {line}")
 
     def test_post_update_re_arms_a_timer_whose_interval_changed(self):
         """A running timer keeps the schedule it started with, so shortening

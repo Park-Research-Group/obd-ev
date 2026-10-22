@@ -291,5 +291,30 @@ class TestRateAndFacts(DashboardTestCase):
         self.assertEqual(facts["GPS"], "3D 9sat")
 
 
+
+class TestTheInstaller(unittest.TestCase):
+    """Properties of install_dashboard.sh that only bite on real hardware."""
+
+    def setUp(self):
+        self.body = (REPO_ROOT / "scripts" / "install_dashboard.sh").read_text()
+
+    def test_the_unit_is_installed_readable(self):
+        """`sudo cp` of a mktemp file lands as 0600 root, so nobody can read
+        the unit back while working out why the screen is blank."""
+        self.assertIn("install -m 644", self.body)
+        self.assertNotIn('sudo cp "$tmp"', self.body)
+
+    def test_it_installs_the_gl_userspace(self):
+        """Pi OS Lite has the kernel side of KMS and none of Mesa; the
+        symptom is `EGL not initialized`, which reads like a dead panel."""
+        for pkg in ("libgl1-mesa-dri", "libegl1", "libgles2", "libgbm1"):
+            self.assertIn(pkg, self.body)
+
+    def test_it_checks_which_hdmi_port_the_panel_is_on(self):
+        """SDL drives the first connector, not the first connected one."""
+        self.assertIn("HDMI-A-", self.body)
+        self.assertIn("status", self.body)
+
+
 if __name__ == "__main__":
     unittest.main()
