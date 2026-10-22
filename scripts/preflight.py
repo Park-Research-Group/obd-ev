@@ -31,10 +31,14 @@ GREEN, YELLOW, RED, DIM, RESET = (
     if sys.stdout.isatty() else ("", "", "", "", ""))
 
 results = []
+# --failures turns the report into a machine-readable list; see main().
+QUIET = False
 
 
 def record(status, name, detail=""):
     results.append((status, name, detail))
+    if QUIET:
+        return
     colour = {"PASS": GREEN, "WARN": YELLOW, "FAIL": RED}[status]
     print(f"  {colour}{status:<4}{RESET}  {name}"
           + (f"\n        {DIM}{detail}{RESET}" if detail else ""))
@@ -49,6 +53,8 @@ def run(*cmd, timeout=20):
 
 
 def section(title):
+    if QUIET:
+        return
     print(f"\n{title}")
 
 
@@ -480,7 +486,14 @@ def main() -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--quick", action="store_true",
                         help="skip the cloud round trip")
+    parser.add_argument("--failures", action="store_true",
+                        help="print one line per failing check and nothing "
+                             "else; always exits 0. For comparing a kit "
+                             "against itself across an update.")
     args = parser.parse_args()
+    if args.failures:
+        global QUIET
+        QUIET = True
 
     # /etc/default/obd-ev is what the services read; mirror it here.
     env_file = Path("/etc/default/obd-ev")
@@ -516,6 +529,13 @@ def main() -> int:
     failed = sum(1 for s, _, _ in results if s == "FAIL")
     warned = sum(1 for s, _, _ in results if s == "WARN")
     passed = sum(1 for s, _, _ in results if s == "PASS")
+    if args.failures:
+        # Names only, no detail: the detail carries paths and counts that
+        # differ run to run, and the caller is comparing sets.
+        for status, name, _ in results:
+            if status == "FAIL":
+                print(name)
+        return 0
     print(f"\n{passed} passed, {warned} warnings, {failed} failures")
     if failed:
         print(f"{RED}Not ready to ship.{RESET} Fix the FAIL items above.")

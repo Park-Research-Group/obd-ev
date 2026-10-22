@@ -38,6 +38,7 @@ STATE_DIR="${OBD_EV_STATE_DIR:-/var/lib/obd-ev}"
 STAMP="$STATE_DIR/last-update-check"
 DEFERRED="$STATE_DIR/update-deferred-since"
 SKIPPED="$STATE_DIR/update-skipped-commit"
+REJECTED="$STATE_DIR/update-rejected-commit"
 # Which kit this is, by the same rule config.py uses, so the id in
 # deploy-targets is the id in the CSVs and the upload folder.
 DEVICE_ID="${OBD_EV_DEVICE_ID:-$(hostname)}"
@@ -179,6 +180,11 @@ remote="$(git_as rev-parse "origin/$branch" 2>/dev/null)"
 [ -z "$remote" ] && { log "no such branch origin/$branch"; exit 0; }
 [ "$before" = "$remote" ] && [ "$current" = "$branch" ] && { rm -f "$DEFERRED"; exit 0; }
 
+# -- did this exact commit already break this kit? --------------------------
+if [ "$FORCE" != 1 ] && [ "$(cat "$REJECTED" 2>/dev/null)" = "$remote" ]; then
+    exit 0
+fi
+
 # -- is this commit meant for this kit? -------------------------------------
 # Staged rollout: a commit can name the kits it is for, so a change can be
 # proven on the bench kit before it reaches a car. See targets_this_kit().
@@ -216,6 +222,18 @@ if [ "$FORCE" != 1 ] && trip_in_progress; then
 fi
 rm -f "$DEFERRED"
 
+# -- what is already broken, before we change anything ----------------------
+# The post-update check used to be "does preflight pass?", which fails on a
+# kit whose GPS is not wired yet -- so every update installed, saw the same
+# missing sensor it saw before, called itself the cause and rolled back. On
+# a five-minute timer that is a permanent loop, and the kit never moves.
+#
+# What matters is whether the update made anything *worse*, so record the
+# failures it inherited and compare like with like afterwards.
+BASELINE="$(mktemp)"
+trap 'rm -f "$BASELINE" "$AFTER"' EXIT
+"$REPO_DIR/scripts/preflight.py" --quick --failures >"$BASELINE" 2>/dev/null || true
+
 # Why git refused matters more than that it refused: the usual cause is a
 # file someone copied onto the kit by hand, at a path an update now also
 # carries. `git status --untracked-files=no` above calls that repo clean, and
@@ -250,16 +268,34 @@ fi
 systemctl restart obd-ev
 sleep 12
 
-if "$REPO_DIR/scripts/preflight.py" --quick >/tmp/obd-ev-update-preflight 2>&1; then
-    log "updated to ${remote:0:8}, preflight clean"
+AFTER="$(mktemp)"
+"$REPO_DIR/scripts/preflight.py" --quick --failures >"$AFTER" 2>/dev/null || true
+"$REPO_DIR/scripts/preflight.py" --quick >/tmp/obd-ev-update-preflight 2>&1 || true
+
+# Failures this update introduced: present now, absent before.
+new_failures="$(comm -13 <(sort -u "$BASELINE") <(sort -u "$AFTER"))"
+
+if [ -z "$new_failures" ]; then
+    inherited="$(grep -c . "$AFTER" 2>/dev/null || echo 0)"
+    if [ "$inherited" -gt 0 ]; then
+        log "updated to ${remote:0:8}; $inherited pre-existing failure(s) \
+unchanged, nothing new"
+    else
+        log "updated to ${remote:0:8}, preflight clean"
+    fi
+    rm -f "$REJECTED"
     exit 0
 fi
 
-log "preflight FAILED after update -- rolling back to ${before:0:8}"
-sed -n 's/^  FAIL/    FAIL/p' /tmp/obd-ev-update-preflight
+log "update ${remote:0:8} introduced new failures -- rolling back to ${before:0:8}"
+printf '%s\n' "$new_failures" | sed 's/^/    FAIL  /'
 git_as checkout -B "$current" --quiet "$before" 2>/dev/null \
     || git_as reset --hard "$before" --quiet
 "$REPO_DIR/scripts/post_update.sh" || true
 systemctl restart obd-ev
-log "rolled back"
+# Remember which commit did this. Retrying it every five minutes reinstalls
+# and rolls back the same code forever, and the churn hides the one line
+# that says why.
+echo "$remote" > "$REJECTED"
+log "rolled back; will not retry ${remote:0:8} until the branch moves on"
 exit 1

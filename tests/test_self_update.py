@@ -51,7 +51,21 @@ case "$1 ${2:-}" in
             cat "$FAKE_LOG/merge-fails" >&2
             exit 1
         fi
-        cat "$FAKE_LOG/remote" > "$FAKE_LOG/head"
+        # `checkout -B <branch> --quiet <sha>` is the rollback; the same verb
+        # with --track is the one-time switch onto the release branch.
+        target=""
+        if [ "$1" = "checkout" ]; then
+            for a in "$@"; do
+                case "$a" in checkout|-*|deploy|main|origin/*) ;;
+                             *) target="$a" ;; esac
+            done
+        fi
+        if [ -n "$target" ]; then
+            echo "$target" > "$FAKE_LOG/head"
+            rm -f "$FAKE_LOG/updated"
+        else
+            cat "$FAKE_LOG/remote" > "$FAKE_LOG/head"
+        fi
         echo "deploy" > "$FAKE_LOG/branch"
         ;;
 esac
@@ -88,9 +102,23 @@ esac
 # Nothing in these tests should wait out the post-restart settle.
 FAKE_SLEEP = "#!/usr/bin/env bash\nexit 0\n"
 
-STUB_POST_UPDATE = "#!/usr/bin/env bash\necho post_update >> \"$FAKE_LOG/ran\"\n"
-STUB_PREFLIGHT = ("#!/usr/bin/env bash\necho preflight >> \"$FAKE_LOG/ran\"\n"
-                  "[ -f \"$FAKE_LOG/preflight-fails\" ] && exit 1\nexit 0\n")
+STUB_POST_UPDATE = ("#!/usr/bin/env bash\n"
+                    'echo post_update >> "$FAKE_LOG/ran"\n'
+                    'touch "$FAKE_LOG/updated"\n')
+# Mirrors the real preflight: `--failures` lists failing checks, one per
+# line, and exits 0 regardless. The test drives it through two files, so a
+# failure can be made to pre-date the update or to arrive with it.
+STUB_PREFLIGHT = r"""#!/usr/bin/env bash
+echo preflight >> "$FAKE_LOG/ran"
+if [ -f "$FAKE_LOG/updated" ]; then
+    list="$FAKE_LOG/fails-after"
+else
+    list="$FAKE_LOG/fails-before"
+fi
+for arg in "$@"; do [ "$arg" = "--failures" ] && { cat "$list" 2>/dev/null; exit 0; }; done
+[ -s "$list" ] && { sed 's/^/  FAIL  /' "$list"; exit 1; }
+exit 0
+"""
 
 CSV_HEADER = "timestamp,t_mono,device_id,obd_connected,speed_kph\n"
 
@@ -216,7 +244,7 @@ class TestDeferringADrive(SelfUpdateHarness):
         result = self.run_update()
         self.assertIn("updating mid-drive", result.stdout)
         self.assertEqual(self.head(), "bbbbbbbb")
-        self.assertEqual(self.ran(), ["post_update", "preflight"])
+        self.assertIn("post_update", self.ran())
 
     def test_a_bounded_deferral_asks_the_logger_to_close_the_part(self):
         """The drive survives the restart as a complete file, rather than as
@@ -269,7 +297,7 @@ class TestTheLoggerCannotBlockItsOwnRepair(SelfUpdateHarness):
         self.driving()
         (self.fake / "logger-active").unlink()
         self.run_update()
-        self.assertEqual(self.ran(), ["post_update", "preflight"])
+        self.assertIn("post_update", self.ran())
 
     def test_no_marker_at_all_is_not_a_drive(self):
         (self.fake / "logger-active").touch()
@@ -291,7 +319,7 @@ class TestGettingOntoTheReleaseBranch(SelfUpdateHarness):
         result = self.run_update()
         self.assertIn("switching from main to deploy", result.stdout)
         self.assertEqual((self.fake / "branch").read_text().strip(), "deploy")
-        self.assertEqual(self.ran(), ["post_update", "preflight"])
+        self.assertIn("post_update", self.ran())
 
     def test_the_switch_also_waits_for_a_drive_to_end(self):
         (self.fake / "branch").write_text("main\n")
@@ -314,7 +342,8 @@ class TestARefusalSaysWhy(SelfUpdateHarness):
         self.assertIn("scripts/dashboard.py", result.stdout)
         self.assertIn("refusing to update", result.stdout)
         self.assertEqual(result.returncode, 1)
-        self.assertEqual(self.ran(), [], "nothing applied after a refusal")
+        self.assertNotIn("post_update", self.ran(),
+                         "nothing applied after a refusal")
 
     def test_local_edits_are_refused_with_the_file_named(self):
         (self.fake / "dirty").write_text(" M src/obd_ev/logger.py\n")
@@ -416,6 +445,59 @@ class TestTheShippedTargetsFile(unittest.TestCase):
         live = [l.split("#")[0].strip() for l in body.splitlines()]
         self.assertEqual([l for l in live if l], ["*"],
                          "deploy-targets is still narrowed to a subset")
+
+
+class TestRollbackJudgesTheUpdate(SelfUpdateHarness):
+    """The post-update check asks whether this update broke something, not
+    whether the kit is perfect. A kit with an unwired sensor fails preflight
+    for reasons no commit can fix, and rolling back for that is a loop:
+    install, see the same missing sensor, revert, retry in five minutes."""
+
+    def fails(self, before=(), after=()):
+        (self.fake / "fails-before").write_text("".join(f"{f}\n" for f in before))
+        (self.fake / "fails-after").write_text("".join(f"{f}\n" for f in after))
+
+    def test_a_pre_existing_failure_does_not_trigger_a_rollback(self):
+        self.fails(before=["/dev/ttyS0 does not exist", "no I2C device at 0x68"],
+                   after=["/dev/ttyS0 does not exist", "no I2C device at 0x68"])
+        result = self.run_update()
+        self.assertEqual(self.head(), "bbbbbbbb", result.stdout)
+        self.assertIn("pre-existing failure", result.stdout)
+        self.assertNotIn("rolling back", result.stdout)
+
+    def test_a_failure_the_update_introduced_does_trigger_one(self):
+        self.fails(before=["/dev/ttyS0 does not exist"],
+                   after=["/dev/ttyS0 does not exist", "config.yaml does not load"])
+        result = self.run_update()
+        self.assertEqual(self.head(), "aaaaaaaa")
+        self.assertIn("introduced new failures", result.stdout)
+        self.assertIn("config.yaml does not load", result.stdout)
+        self.assertEqual(result.returncode, 1)
+
+    def test_a_clean_kit_still_reports_clean(self):
+        self.fails()
+        self.assertIn("preflight clean", self.run_update().stdout)
+
+    def test_a_rejected_commit_is_not_retried_every_five_minutes(self):
+        """Reinstalling and reverting the same code on a timer hides the one
+        line that says why."""
+        self.fails(before=[], after=["config.yaml does not load"])
+        self.run_update()
+        self.assertEqual(self.head(), "aaaaaaaa")
+        before_calls = len(self.ran())
+        second = self.run_update(**{"OBD_EV_UPDATE_MIN_INTERVAL": "0"})
+        self.assertEqual(len(self.ran()), before_calls,
+                         "the same bad commit was applied a second time")
+        self.assertEqual(second.returncode, 0)
+
+    def test_a_newer_commit_is_tried_again_after_a_rejection(self):
+        self.fails(before=[], after=["config.yaml does not load"])
+        self.run_update()
+        (self.fake / "remote").write_text("cccccccc\n")
+        self.fails(before=[], after=[])
+        (self.fake / "updated").unlink(missing_ok=True)
+        result = self.run_update(**{"OBD_EV_UPDATE_MIN_INTERVAL": "0"})
+        self.assertEqual(self.head(), "cccccccc", result.stdout)
 
 
 class TestForceAndRateLimit(SelfUpdateHarness):
