@@ -104,17 +104,22 @@ step 1 "Kit details"
 DEVICE_ID="$(ask 'Kit / participant id (e.g. P003)' "$(env_get OBD_EV_DEVICE_ID)")"
 DEVICE_ID="${DEVICE_ID// /-}"
 
+# Open by default: it is the one step the participant does alone, and a
+# password on a label is a thing to mistype or lose. Answer with one (8+
+# characters) to use WPA2 instead; blank keeps it open.
 default_ap="$(env_get OBD_EV_AP_PASSWORD)"
-[ -z "$default_ap" ] && default_ap="$(random_password)"
-AP_PASSWORD="$(ask 'Password for this kit'\''s setup WiFi (goes on the label)' "$default_ap")"
-while [ "${#AP_PASSWORD}" -lt 8 ]; do
-    warn "Must be at least 8 characters."
-    AP_PASSWORD="$(ask 'Setup WiFi password' "$default_ap")"
+AP_PASSWORD="$(ask 'Setup WiFi password (blank = open network)' "$default_ap")"
+while [ -n "$AP_PASSWORD" ] && [ "${#AP_PASSWORD}" -lt 8 ]; do
+    warn "WPA2 needs at least 8 characters -- or leave it blank for open."
+    AP_PASSWORD="$(ask 'Setup WiFi password (blank = open network)' "")"
 done
 
 note "Writing $ENV_FILE"
 if [ ! -f "$ENV_FILE" ]; then
-    sudo tee "$ENV_FILE" >/dev/null <<ENVEOF
+    # Quoted delimiter: the comment below contains backticks, and an
+    # unquoted heredoc runs them -- `deploy: command not found`, and a
+    # mangled comment in the file it just wrote.
+    sudo tee "$ENV_FILE" >/dev/null <<'ENVEOF'
 # obd-ev kit configuration. Written by scripts/setup_kit.sh; edited in place
 # on re-runs, so hand-added settings survive.
 #
@@ -230,11 +235,11 @@ cat <<SUMMARY
 
   ${bold}Kit id${reset}              $DEVICE_ID
   ${bold}Setup WiFi${reset}          OBD-EV-Setup-$DEVICE_ID
-  ${bold}Setup password${reset}      $AP_PASSWORD
+  ${bold}Setup password${reset}      ${AP_PASSWORD:-(none -- open network)}
   ${bold}Vehicle${reset}             ${KIT_VEHICLE:-generic Mode 01} ${KIT_VEHICLE_YEAR:-}
 
-  Write the setup WiFi name and password on the kit. The participant needs
-  them once, to tell the device their home network.
+  Write the setup WiFi name on the kit. The participant needs it once, to
+  tell the device their home network.
 
 SUMMARY
 

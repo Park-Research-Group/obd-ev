@@ -29,10 +29,15 @@ step is idempotent, so a failure means fix-and-rerun, not start over.
 | 3 System | apt, I2C/UART, virtualenv, gpsd, Bluetooth, systemd units |
 | 4 Cloud | `rclone config`, then a real test upload |
 | 5 Verify | `preflight.py`; non-zero exit if not shippable |
-| 6 Label | prints the setup network name and password |
+| 6 Label | prints the setup network name |
 
-Label the kit with the setup network name and password. You never handle
-participant WiFi credentials — they enter them on the device.
+Label the kit with the setup network name. The network is open by default:
+it exists only until the participant saves a home network, and a password on
+a label is one more thing to mistype or lose. Set `OBD_EV_AP_PASSWORD` (8+
+characters) in `/etc/default/obd-ev` to put WPA2 back on a given kit — worth
+doing if a kit will sit unprovisioned somewhere busy, since while the AP is
+up anyone in range can reach the portal, which is plain HTTP. You never
+handle participant WiFi credentials — they enter them on the device.
 
 ## Vehicle selection
 

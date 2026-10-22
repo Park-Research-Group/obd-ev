@@ -159,12 +159,6 @@ sudo systemctl enable --now obd-ev-update.timer
 echo "[8/8] default env file"
 # Default env file (overridable per-device).
 if [ ! -f /etc/default/obd-ev ]; then
-    # The setup access point needs a WPA2 password of its own. It is printed
-    # on the kit's label; a random one per device is fine and preferable.
-    # Not `tr ... | head -c 10`: head closes the pipe, tr dies of SIGPIPE, and
-    # `set -o pipefail` above turns that into a fatal error.
-    ap_password="$(LC_ALL=C dd if=/dev/urandom bs=256 count=1 2>/dev/null \
-        | LC_ALL=C tr -dc 'a-z2-9' | cut -c1-10)"
     sudo tee /etc/default/obd-ev >/dev/null <<ENVEOF
 OBD_EV_LOG_DIR=$REPO_DIR/logs
 OBD_EV_REMOTE=obd-ev:obd-ev-uploads
@@ -172,15 +166,16 @@ OBD_EV_RCLONE_CONF=$INSTALL_HOME/.config/rclone/rclone.conf
 # Remote updates from the deploy branch. Set to 0 to opt this kit out.
 OBD_EV_AUTO_UPDATE=1
 OBD_EV_UPDATE_BRANCH=deploy
-# Password for the "OBD-EV-Setup-<device id>" network the participant joins.
-# PRINT THIS ON THE KIT LABEL.
-OBD_EV_AP_PASSWORD=$ap_password
+# The "OBD-EV-Setup-<device id>" network the participant joins is open, so
+# there is nothing to print on the label and nothing for them to mistype.
+# Set a password here (8+ characters) to put WPA2 back on it instead.
+OBD_EV_AP_PASSWORD=
 ENVEOF
     sudo chown root:"$(id -gn "$INSTALL_USER")" /etc/default/obd-ev
     sudo chmod 640 /etc/default/obd-ev
     echo
-    echo "  Setup-AP password for this device: $ap_password"
-    echo "  (also in /etc/default/obd-ev; put it on the kit label)"
+    echo "  Setup network: OBD-EV-Setup-<device id>, open (no password)."
+    echo "  Set OBD_EV_AP_PASSWORD in /etc/default/obd-ev for WPA2."
 fi
 
 echo

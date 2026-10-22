@@ -3,23 +3,23 @@
 ## In the box
 
 A small computer (Raspberry Pi), a Bluetooth OBD-II scanner, a USB-C car power
-adapter, and GPS/motion sensors already wired in. The device has a label with a
-**setup password** you'll need once.
+adapter, and GPS/motion sensors already wired in. The device has a label with
+its **setup network name** — you'll need it once.
 
 ## Setup — about a minute, once
 
 Do this at home, where the device can reach your WiFi.
 
 1. **Plug the device into your car's USB-C power** and wait about a minute.
-2. On your phone, **join the WiFi network `OBD-EV-Setup-…`** using the setup
-   password on the label.
+2. On your phone, **join the WiFi network `OBD-EV-Setup-…`** named on the
+   label. It has no password.
 3. A setup page should open by itself. If not, go to **http://10.42.0.1**
 4. **Choose your home WiFi**, type your WiFi password, tap **Connect**.
 5. The setup network disappears — that's what should happen. If nothing else
    happens, you're done.
 
-Mistyped the password? The `OBD-EV-Setup-…` network comes back after about a
-minute. Rejoin it and try again.
+Mistyped your home WiFi password? The `OBD-EV-Setup-…` network comes back
+after about a minute. Rejoin it and try again.
 
 ### Your WiFi password is not stored
 

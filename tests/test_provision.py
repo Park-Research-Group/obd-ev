@@ -258,5 +258,56 @@ class CredentialRecordTest(unittest.TestCase):
         self.assertNotIn("wpa-psk", add)
 
 
+
+class SetupNetworkSecurityTest(unittest.TestCase):
+    """The setup AP is open unless a password is configured. It carries the
+    participant's home WiFi password over plain HTTP, so which one it is
+    matters; the default is open because that step is done unsupervised."""
+
+    def nmcli_args(self, ap_password):
+        """The arguments start_ap would hand nmcli, without a radio."""
+        calls = []
+
+        def fake_nmcli(*args, **kw):
+            calls.append(args)
+            class R:
+                returncode = 0
+                stderr = ""
+            return R()
+
+        original = ps.nmcli
+        ps.nmcli = fake_nmcli
+        try:
+            ps.Provisioner("P002", ap_password).start_ap()
+        finally:
+            ps.nmcli = original
+        return [a for a in calls if "add" in a][0]
+
+    def test_no_password_means_an_open_network(self):
+        args = self.nmcli_args("")
+        self.assertNotIn("wifi-sec.key-mgmt", args)
+        self.assertNotIn("wifi-sec.psk", args)
+        self.assertIn("OBD-EV-Setup-P002", args)
+
+    def test_a_password_still_gives_wpa2(self):
+        args = self.nmcli_args("labelpassword")
+        self.assertIn("wifi-sec.key-mgmt", args)
+        self.assertIn("wpa-psk", args)
+        self.assertIn("labelpassword", args)
+
+    def test_a_too_short_password_is_an_error_not_a_silent_open_network(self):
+        """WPA2 refuses under 8 characters. Falling back to open there would
+        turn a typo into a quietly unprotected network."""
+        import io, contextlib
+        argv = sys.argv
+        sys.argv = ["obd-ev-provision", "--ap-password", "short",
+                    "--device-id", "P002"]
+        try:
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(ps.main(), 2)
+        finally:
+            sys.argv = argv
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -22,6 +22,7 @@ leaving every other line of that file untouched.
 """
 
 import argparse
+import fnmatch
 import json
 import os
 import subprocess
@@ -136,9 +137,12 @@ def download(name):
 NON_PROFILE_FILES = {"index.json"}
 
 
+SIDECAR_SUFFIXES = (".meta.json", ".collect.json")
+
+
 def is_profile(path: Path) -> bool:
     return (path.name not in NON_PROFILE_FILES
-            and not path.name.endswith(".meta.json"))
+            and not path.name.endswith(SIDECAR_SUFFIXES))
 
 
 def discover():
@@ -189,16 +193,63 @@ def ask_year(profile):
         print("  Enter one of the listed years.")
 
 
+def selected_counts(profile, year):
+    """What the kit will actually poll: the profile narrowed by the signal
+    selection that ships beside it. Without this the picker quotes the whole
+    signalset -- 292 commands on the Bolt, where the kit sends 15 -- and
+    warns about a BLE link that is never asked to carry them.
+
+    Read with json rather than obd_ev.config: this runs before the venv
+    exists, on whatever python3 the image came with.
+    """
+    collect = profile.path.with_suffix(".collect.json")
+    if not collect.exists():
+        return None
+    try:
+        doc = json.loads(collect.read_text())
+    except ValueError:
+        return None
+    include = [p for p in doc.get("include_signals") or [] if isinstance(p, str)]
+    exclude = [p for p in doc.get("exclude_signals") or [] if isinstance(p, str)]
+    if not include and not exclude:
+        return None
+
+    def wanted(signal_id):
+        if any(fnmatch.fnmatchcase(signal_id, p) for p in exclude):
+            return False
+        return not include or any(fnmatch.fnmatchcase(signal_id, p)
+                                  for p in include)
+
+    commands = signals = 0
+    for command in profile.signalset(year).commands:
+        kept = [s for s in command.signals if wanted(s.id)]
+        if kept:
+            commands += 1
+            signals += len(kept)
+    return commands, signals
+
+
 def describe(profile, year):
     commands, signals, groups = profile.summary(year)
-    print(f"\nThis kit will collect {signals} signals from {commands} commands"
-          f"{f' for model year {year}' if year else ''}:")
+    selected = selected_counts(profile, year)
+    if selected:
+        polled_commands, polled_signals = selected
+        print(f"\nThis kit will collect {polled_signals} signals from "
+              f"{polled_commands} commands"
+              f"{f' for model year {year}' if year else ''} -- the selection "
+              f"in {profile.path.stem}.collect.json,")
+        print(f"out of {signals} signals and {commands} commands this profile "
+              f"describes:")
+    else:
+        polled_commands = commands
+        print(f"\nThis kit will collect {signals} signals from {commands} commands"
+              f"{f' for model year {year}' if year else ''}:")
     for group, n in sorted(groups.items(), key=lambda kv: -kv[1])[:8]:
         print(f"    {n:>4}  {group}")
-    if commands > 40:
-        print(f"\n  Note: {commands} commands is a lot for a BLE adapter -- each"
-              f"\n  one is a round trip. If the achieved row rate is too low,"
-              f"\n  list the signals you need in vehicle.include_signals in"
+    if polled_commands > 40:
+        print(f"\n  Note: {polled_commands} commands is a lot for a BLE adapter"
+              f" -- each\n  one is a round trip. If the achieved row rate is too"
+              f" low,\n  list the signals you need in vehicle.include_signals in"
               f"\n  config.yaml (see docs/deployment.md).")
 
 

@@ -191,5 +191,35 @@ class TestSelectedByEnv(unittest.TestCase):
         self.assertEqual(len(cfg.vehicle.include_signals), 15)
 
 
+
+class TestTheVehiclePicker(unittest.TestCase):
+    """setup_kit.sh runs select_vehicle.py on whatever python3 the image
+    came with, before the venv exists."""
+
+    def setUp(self):
+        sys.path.insert(0, str(REPO_ROOT / "scripts"))
+        import select_vehicle
+        self.sv = select_vehicle
+
+    def test_sidecars_are_not_offered_as_vehicles(self):
+        """`Chevrolet-Bolt-EUV.collect` is a signal list, not a car."""
+        names = [p.name for p in self.sv.discover()]
+        self.assertIn("Chevrolet-Bolt-EUV", names)
+        for name in names:
+            self.assertFalse(name.endswith((".collect", ".meta")), name)
+
+    def test_it_reports_what_the_kit_will_actually_poll(self):
+        """Quoting the whole signalset overstates it by 20x on the Bolt and
+        warns about a BLE link that is never asked to carry it."""
+        profile = [p for p in self.sv.discover()
+                   if p.name == "Chevrolet-Bolt-EUV"][0]
+        self.assertEqual(self.sv.selected_counts(profile, 2023), (15, 15))
+
+    def test_a_profile_with_no_sidecar_reports_the_whole_signalset(self):
+        profile = [p for p in self.sv.discover()
+                   if p.name == "Hyundai-IONIQ-5"][0]
+        self.assertIsNone(self.sv.selected_counts(profile, 2024))
+
+
 if __name__ == "__main__":
     unittest.main()

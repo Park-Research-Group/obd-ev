@@ -422,11 +422,17 @@ def check_provisioning():
                "setup_kit.sh removes the hold when it finishes cleanly")
     else:
         record("PASS", "setup portal will run on first boot")
-    if len(os.environ.get("OBD_EV_AP_PASSWORD", "")) >= 8:
-        record("PASS", "setup-AP password set")
+    ap_password = os.environ.get("OBD_EV_AP_PASSWORD", "")
+    if not ap_password:
+        record("PASS", "setup network is open",
+               "nothing for the participant to type; set "
+               "OBD_EV_AP_PASSWORD for WPA2")
+    elif len(ap_password) >= 8:
+        record("PASS", "setup-AP password set (WPA2)")
     else:
-        record("WARN", "OBD_EV_AP_PASSWORD unset or too short",
-               "the provisioning service will refuse to start")
+        record("FAIL", "OBD_EV_AP_PASSWORD is shorter than 8 characters",
+               "WPA2 will not accept it and provisioning refuses to start; "
+               "clear it for an open network")
 
 
 def main() -> int:

@@ -130,25 +130,40 @@ class Provisioner:
     # -- access point -------------------------------------------------------
 
     def start_ap(self) -> None:
+        """Raise the setup network. Open unless a password is configured.
+
+        Open is the default because it removes a step from the one part of
+        the study a participant does alone: no password to read off a label,
+        mistype, or lose. The window is small -- the AP exists only until a
+        home network is saved, once, in a driveway -- but it is a real one:
+        while it is up, anyone in range can reach the portal, and the portal
+        is plain HTTP and is where the participant types their home WiFi
+        password. Set OBD_EV_AP_PASSWORD to get WPA2 back.
+        """
         nmcli("connection", "delete", AP_CONNECTION)
-        add = nmcli(
+        settings = [
             "connection", "add", "type", "wifi", "ifname", self.iface,
             "con-name", AP_CONNECTION, "autoconnect", "no",
             "ssid", self.ap_ssid,
             "802-11-wireless.mode", "ap",
             "802-11-wireless.band", "bg",
             "ipv4.method", "shared",
-            "wifi-sec.key-mgmt", "wpa-psk",
-            "wifi-sec.proto", "rsn",
-            "wifi-sec.pairwise", "ccmp",
-            "wifi-sec.psk", self.ap_password,
-        )
+        ]
+        if self.ap_password:
+            settings += [
+                "wifi-sec.key-mgmt", "wpa-psk",
+                "wifi-sec.proto", "rsn",
+                "wifi-sec.pairwise", "ccmp",
+                "wifi-sec.psk", self.ap_password,
+            ]
+        add = nmcli(*settings)
         if add.returncode != 0:
             raise RuntimeError(f"could not create AP profile: {add.stderr.strip()}")
         up = nmcli("connection", "up", AP_CONNECTION, timeout=60)
         if up.returncode != 0:
             raise RuntimeError(f"could not start AP: {up.stderr.strip()}")
-        log.info("access point %r is up on %s", self.ap_ssid, PORTAL_ADDR)
+        log.info("access point %r is up on %s (%s)", self.ap_ssid, PORTAL_ADDR,
+                 "WPA2" if self.ap_password else "open")
 
     def stop_ap(self) -> None:
         nmcli("connection", "down", AP_CONNECTION)
@@ -409,9 +424,12 @@ def main() -> int:
     if already_provisioned() and not args.force:
         log.info("%s exists; nothing to provision", MARKER)
         return 0
-    if len(args.ap_password) < 8:
-        log.error("set OBD_EV_AP_PASSWORD (at least 8 characters) in "
-                  "/etc/default/obd-ev; it goes on the kit's label")
+    # An empty password means an open network, which is the default. A short
+    # one is a typo, not an intention: WPA2 refuses under 8 characters, and
+    # silently falling back to open would be the wrong way to resolve that.
+    if args.ap_password and len(args.ap_password) < 8:
+        log.error("OBD_EV_AP_PASSWORD must be at least 8 characters, or "
+                  "empty for an open setup network")
         return 2
 
     return run_provisioning(args.device_id, args.ap_password, args.iface,
