@@ -91,6 +91,32 @@ for group in video render input; do
     sudo usermod -aG "$group" "$INSTALL_USER"
 done
 
+# A kit running a desktop is a different installation entirely: the session
+# owns the display, and a system service fighting it for DRM is how you get
+# a black screen that reports success at every layer. Autostart inside the
+# session instead.
+if [ -n "${DESKTOP_SESSION:-}" ] || systemctl get-default | grep -q graphical \
+        || systemctl list-unit-files 'display-manager.service' 2>/dev/null | grep -q display-manager; then
+    echo "[5/6] desktop detected -- installing a session autostart, not a unit"
+    mkdir -p "$HOME/.config/autostart"
+    cat > "$HOME/.config/autostart/obd-ev-dashboard.desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=obd-ev dashboard
+Comment=Kit status display (test kits only)
+Exec=$VENV_DIR/bin/python $REPO_DIR/scripts/dashboard.py --config $REPO_DIR/config.yaml --backend pygame
+Terminal=false
+X-GNOME-Autostart-enabled=true
+DESKTOP
+    echo "      wrote ~/.config/autostart/obd-ev-dashboard.desktop"
+    echo "      it starts with the desktop session; log out and in to test,"
+    echo "      or run it now from a terminal ON the kit (not over SSH):"
+    echo "        $REPO_DIR/scripts/dashboard.py"
+    echo
+    echo "Remove with: rm ~/.config/autostart/obd-ev-dashboard.desktop"
+    exit 0
+fi
+
 echo "[5/6] install $UNIT"
 tmp="$(mktemp)"
 sed -e "s|@REPO_DIR@|$REPO_DIR|g" \

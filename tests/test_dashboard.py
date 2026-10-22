@@ -292,6 +292,19 @@ class TestRateAndFacts(DashboardTestCase):
 
 
 
+class TestVideoDriverChoice(unittest.TestCase):
+    """kmsdrm is right on a Lite kit and wrong on a desktop one."""
+
+    def setUp(self):
+        self.body = (REPO_ROOT / "scripts" / "dashboard.py").read_text()
+
+    def test_kmsdrm_is_only_forced_without_a_display_server(self):
+        block = self.body[self.body.index("SDL_VIDEODRIVER"):]
+        window = self.body[:self.body.index("SDL_VIDEODRIVER")][-400:]
+        self.assertIn("DISPLAY", window + block[:200])
+        self.assertIn("WAYLAND_DISPLAY", window + block[:200])
+
+
 class TestTheInstaller(unittest.TestCase):
     """Properties of install_dashboard.sh that only bite on real hardware."""
 
@@ -309,6 +322,12 @@ class TestTheInstaller(unittest.TestCase):
         symptom is `EGL not initialized`, which reads like a dead panel."""
         for pkg in ("libgl1-mesa-dri", "libegl1", "libgles2", "libgbm1"):
             self.assertIn(pkg, self.body)
+
+    def test_it_autostarts_in_a_session_on_a_desktop_image(self):
+        """A system service started outside the session fights the
+        compositor for DRM and loses, silently."""
+        self.assertIn("autostart", self.body)
+        self.assertIn("obd-ev-dashboard.desktop", self.body)
 
     def test_it_checks_which_hdmi_port_the_panel_is_on(self):
         """SDL drives the first connector, not the first connected one."""

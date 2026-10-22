@@ -119,6 +119,27 @@ scripts/dashboard.py --once            # one snapshot, scriptable
 `scripts/dashboard.py` shows the whole kit, with ages. The two share their
 trip lookup and unit labels, so they cannot disagree.
 
+## Lite image or desktop image
+
+The dashboard runs either way, but they are different installations and
+`install_dashboard.sh` picks between them:
+
+| | Lite (participant kits, and the default) | Desktop (bench kit) |
+|---|---|---|
+| How it starts | `obd-ev-dashboard.service` | autostart in the desktop session |
+| SDL video driver | `kmsdrm`, straight to the framebuffer | whatever the session uses (x11/wayland) |
+| Needs | nothing but Mesa | a working desktop |
+
+On a desktop image, a *system service* is the wrong shape: the session owns
+the display, and a service started outside it fights the compositor for DRM
+and loses — silently, reporting success at every layer. So the installer
+writes `~/.config/autostart/obd-ev-dashboard.desktop` instead, and
+`dashboard.py` only forces `SDL_VIDEODRIVER=kmsdrm` when there is no
+`DISPLAY` or `WAYLAND_DISPLAY` to use.
+
+A desktop bench kit is deliberately **not** a participant kit any more. A
+display fault you hit on one will not necessarily reproduce on the other.
+
 ## When it does not come up
 
 The logger is unaffected either way — debug it at leisure.
@@ -164,6 +185,32 @@ will fix it.
 * No display, no error — the service is running the text renderer into the
   journal. It passes `--backend pygame` precisely so that cannot happen
   silently; if you see it, something is launching it with `--backend auto`.
+
+### A black screen on a Lite kit, with everything reporting success
+
+Worth knowing what has already been ruled out, because the instruments all
+lie in the same reassuring direction. On P002 every one of these said the
+picture was going out while the panel stayed black:
+
+```bash
+# the connector, its mode, and whether it is the one SDL drives
+for s in /sys/class/drm/card*-*/status; do echo "$s -> $(cat "$s")"; done
+# which framebuffer is on the plane, and whether it is being flipped
+sudo sh -c 'cat /sys/kernel/debug/dri/*/state' | grep -A6 "crtc=pixelvalve-2"
+# who holds DRM master (a non-root process can, given video/render groups)
+sudo cat /sys/kernel/debug/dri/1/clients
+# power: a panel on the Pi's USB can brown the kit out when the screen lights
+vcgencmd get_throttled        # 0x50000 = has occurred, not occurring now
+sudo dmesg | grep -i voltage
+```
+
+The panel there drew its power from the Pi's USB and the kit logged
+undervoltage events; an independent supply for the panel removed those but
+not the black screen. The remaining suspect was the panel freezing its last
+frame instead of locking onto the timing an app sets — which looks exactly
+like "the console came back". A bench kit with a desktop image sidesteps the
+whole question, which is why that is the supported shape for a kit with a
+screen.
 * Starts, then exits — if `ProtectSystem=strict` is the cause it shows as a
   read-only filesystem error. Comment it out of the unit and report what wrote.
 * Console text showing through — `sudo systemctl disable --now getty@tty1`.

@@ -506,7 +506,13 @@ class PygameScreen:
 
     def __init__(self, size: Optional[Tuple[int, int]] = None,
                  windowed: bool = False):
-        os.environ.setdefault("SDL_VIDEODRIVER", "kmsdrm")
+        # KMS/DRM only when there is no display server to use. On a Lite
+        # image that is the whole point -- no X, no Wayland, straight to the
+        # framebuffer. On a kit running a desktop, forcing it would make SDL
+        # fight the compositor for the device and lose: let SDL pick x11 or
+        # wayland for itself.
+        if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+            os.environ.setdefault("SDL_VIDEODRIVER", "kmsdrm")
         # Without a desktop there is no audio device either, and SDL's audio
         # init failing would take the whole display down with it.
         os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
