@@ -135,6 +135,26 @@ class TestDecodedValuesUseColumns(unittest.TestCase):
 
 
 
+class TestPreflightFailuresMode(unittest.TestCase):
+    """--failures feeds self_update's before/after comparison, so it has to
+    be names and nothing else -- a banner carrying the repo path would be
+    compared as though it were a failing check."""
+
+    def test_it_prints_only_failure_names(self):
+        import subprocess
+        import sys
+        result = subprocess.run(
+            [sys.executable,
+             str(Path(__file__).resolve().parents[1] / "scripts" / "preflight.py"),
+             "--quick", "--failures"],
+            capture_output=True, text=True, timeout=120)
+        self.assertEqual(result.returncode, 0, "--failures must always exit 0")
+        for line in result.stdout.splitlines():
+            self.assertFalse(line.startswith(" "), f"indented output: {line!r}")
+            self.assertNotIn("preflight  (", line)
+            self.assertNotIn("passed,", line)
+
+
 class TestPreflightReadsTheKitEnvFile(unittest.TestCase):
     """A kit's identity lives in /etc/default/obd-ev, which systemd hands to
     the service and a shell does not."""

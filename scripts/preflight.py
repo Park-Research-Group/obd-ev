@@ -511,7 +511,8 @@ def main() -> int:
                 key, value = line.split("=", 1)
                 os.environ.setdefault(key.strip(), value.strip())
 
-    print(f"obd-ev preflight  ({REPO_ROOT})")
+    if not QUIET:
+        print(f"obd-ev preflight  ({REPO_ROOT})")
     cfg = check_config()
     if cfg is None:
         return 1
