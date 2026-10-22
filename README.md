@@ -184,6 +184,7 @@ vehicles/         vendored OBDb profiles + catalogue
 - Participants receiving one: [docs/participant.md](docs/participant.md)
 - Debugging from the car: [docs/dashboard.md](docs/dashboard.md)
 - The bench kit with a screen: [docs/bench-kit.md](docs/bench-kit.md)
+- Running a session with a participant: [docs/test-session.md](docs/test-session.md)
 
 ## Notes
 
