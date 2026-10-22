@@ -338,6 +338,17 @@ complete file), then updates. Nothing is written to the repo before that
 decision, so a deferred update never leaves the running logger on code that
 no longer matches the working tree.
 
+**A rollback means "this update broke something", not "this kit is
+perfect".** After applying an update the kit runs preflight and compares the
+failing checks against the ones it recorded beforehand, rolling back only
+for failures that appeared with the update. The older behaviour -- roll back
+unless preflight passes outright -- meant a kit with an unwired GPS could
+never update at all: every attempt installed, saw the same missing sensor,
+blamed itself and reverted, every five minutes. A kit with pre-existing
+failures now logs `2 pre-existing failure(s) unchanged, nothing new` and
+keeps the update. A commit that is rolled back is remembered and not
+retried until the branch moves on.
+
 **A dead logger cannot block its own repair.** The drive check reads
 `logs/.current`, which is removed on a clean close — and these kits die with
 the ignition instead, so the marker usually outlives the drive that wrote it.
