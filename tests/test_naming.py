@@ -134,6 +134,58 @@ class TestDecodedValuesUseColumns(unittest.TestCase):
         self.assertAlmostEqual(values["state_of_charge_pct"], 50.0)
 
 
+
+class TestPreflightReadsTheKitEnvFile(unittest.TestCase):
+    """A kit's identity lives in /etc/default/obd-ev, which systemd hands to
+    the service and a shell does not."""
+
+    def test_it_loads_obd_ev_keys_without_clobbering_the_environment(self):
+        import os
+        import sys
+        import tempfile
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+        import preflight
+
+        env_file = Path(tempfile.mkdtemp()) / "obd-ev"
+        env_file.write_text(
+            "# a comment\n\n"
+            "OBD_EV_DEVICE_ID=P002\n"
+            'OBD_EV_VEHICLE="Chevrolet-Bolt-EUV"\n'
+            "NOT_OURS=ignored\n"
+            "OBD_EV_ALREADY_SET=from-file\n")
+        saved = {k: os.environ.get(k) for k in
+                 ("OBD_EV_DEVICE_ID", "OBD_EV_VEHICLE", "NOT_OURS",
+                  "OBD_EV_ALREADY_SET")}
+        original_path = preflight.ENV_FILE
+        os.environ["OBD_EV_ALREADY_SET"] = "from-environment"
+        preflight.ENV_FILE = env_file
+        try:
+            preflight.load_kit_env()
+            self.assertEqual(os.environ["OBD_EV_DEVICE_ID"], "P002")
+            self.assertEqual(os.environ["OBD_EV_VEHICLE"], "Chevrolet-Bolt-EUV")
+            self.assertNotIn("NOT_OURS", os.environ)
+            self.assertEqual(os.environ["OBD_EV_ALREADY_SET"],
+                             "from-environment")
+        finally:
+            preflight.ENV_FILE = original_path
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+    def test_a_missing_env_file_is_not_fatal(self):
+        import sys
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+        import preflight
+        original = preflight.ENV_FILE
+        preflight.ENV_FILE = Path("/nonexistent/obd-ev")
+        try:
+            preflight.load_kit_env()
+        finally:
+            preflight.ENV_FILE = original
+
+
 if __name__ == "__main__":
     unittest.main()
 

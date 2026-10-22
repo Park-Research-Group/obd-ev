@@ -54,8 +54,37 @@ def section(title):
 
 # -- configuration ----------------------------------------------------------
 
+ENV_FILE = Path("/etc/default/obd-ev")
+
+
+def load_kit_env():
+    """Pull in /etc/default/obd-ev, which is where a kit's identity lives.
+
+    systemd hands it to the service as EnvironmentFile; a shell running this
+    script by hand gets nothing, so preflight used to report a device id
+    "falling back to hostname" that was in fact set, and tell you to set it
+    again. Values already in the environment win, so an operator can still
+    override one for a single run.
+    """
+    if not ENV_FILE.exists():
+        return
+    try:
+        text = ENV_FILE.read_text()
+    except OSError:
+        return                      # root-owned on some kits; not fatal
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key, value = key.strip(), value.strip().strip('"').strip("'")
+        if key.startswith("OBD_EV_") and key not in os.environ:
+            os.environ[key] = value
+
+
 def check_config():
     section("Configuration")
+    load_kit_env()
     from obd_ev import config as cfgmod
 
     cfg_path = REPO_ROOT / "config.yaml"
@@ -189,9 +218,19 @@ def check_gps(cfg):
     if Path(device).exists():
         record("PASS", f"serial device {device} present")
     else:
-        record("FAIL", f"{device} does not exist",
-               "on a Pi 5 the header UART needs dtparam=uart0=on in "
-               "/boot/firmware/config.txt, then a reboot")
+        enabled = False
+        try:
+            enabled = "enable_uart=1" in Path(
+                "/boot/firmware/config.txt").read_text()
+        except OSError:
+            pass
+        if enabled:
+            hint = ("enable_uart=1 is set but the device node is not there "
+                    "yet -- this needs a reboot")
+        else:
+            hint = ("add enable_uart=1 to /boot/firmware/config.txt (on a Pi 5 "
+                    "it is dtparam=uart0=on), then reboot")
+        record("FAIL", f"{device} does not exist", hint)
         return
 
     active = run("systemctl", "is-active", "--quiet", "gpsd").returncode == 0
